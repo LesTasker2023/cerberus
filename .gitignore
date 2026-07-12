@@ -1,0 +1,24 @@
+# dependencies
+node_modules
+dist
+dist-ssr
+
+# rust / tauri
+target
+src-tauri/target
+src-tauri/gen/schemas
+
+# logs
+*.log
+npm-debug.log*
+
+# env / secrets (never commit signing keys)
+.env
+.env.*
+*.key
+
+# editor / os
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+*.local

@@ -1,0 +1,36 @@
+[package]
+name = "cerberus"
+version = "0.1.0"
+description = "Cerberus — Entropia Universe space PVP clan tool"
+authors = ["les-t"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the lib name unique so it doesn't clash with the bin
+# name on Windows. See https://github.com/rust-lang/cargo/issues/8519
+name = "cerberus_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winuser", "wingdi", "combaseapi", "objbase"] }
+windows = { version = "0.58", features = [
+  "Foundation",
+  "Globalization",
+  "Graphics_Imaging",
+  "Media_Ocr",
+  "Storage_Streams",
+] }
