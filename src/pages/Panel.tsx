@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface Rock {
   name: string;
@@ -74,7 +73,13 @@ export function Panel() {
     state === "busy" ? "···" : state === "ok" ? `✓ ${tag}` : state === "err" ? "✕" : "LOG";
 
   return (
-    <div className="mini" onContextMenu={(e) => (e.preventDefault(), getCurrentWindow().hide())}>
+    <div
+      className="mini"
+      onContextMenu={(e) => {
+        e.preventDefault();
+        invoke("hide_window", { label: "panel" });
+      }}
+    >
       <div className="mini__grip" data-tauri-drag-region title="Drag · right-click to hide">
         ⠿
       </div>

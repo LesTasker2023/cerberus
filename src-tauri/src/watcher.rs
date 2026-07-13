@@ -103,9 +103,13 @@ pub fn spawn(path: PathBuf, running: Arc<AtomicBool>, app: AppHandle) {
         while running.load(Ordering::Relaxed) {
             if let Some(text) = read_new(&path, &mut last_pos) {
                 for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                    let _ = app.emit("log:line", parse_line(line));
+                    let parsed = parse_line(line);
+                    let _ = app.emit("log:line", &parsed);
+                    crate::combat::process_line(&app, &parsed);
                 }
             }
+            // Close any encounter whose loot-settle timer has elapsed.
+            crate::combat::tick(&app);
             thread::sleep(POLL_INTERVAL);
         }
     });

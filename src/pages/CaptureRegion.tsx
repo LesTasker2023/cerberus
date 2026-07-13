@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 
 /**
  * Transparent viewfinder window. Drag the body to move, drag the edges to
@@ -11,7 +11,7 @@ export function CaptureRegion() {
         <span className="capbox__tag">OCR CAPTURE</span>
         <button
           className="capbox__hide"
-          onClick={() => getCurrentWindow().hide()}
+          onClick={() => invoke("hide_window", { label: "capregion" })}
           aria-label="Hide"
         >
           ✕

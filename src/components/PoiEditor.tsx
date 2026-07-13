@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { usePois } from "../hooks/usePois";
+import type { usePois, Poi } from "../hooks/usePois";
 import { IconTrash } from "./icons";
 
 const CATS = [
@@ -22,7 +22,14 @@ function parseCoords(text: string): { x: number; y: number; z: number; name?: st
 
 const EMPTY = { name: "", category: "space-station", x: "", y: "", z: "", pvp: false, notes: "" };
 
-export function PoiEditor({ poiStore }: { poiStore: ReturnType<typeof usePois> }) {
+export function PoiEditor({
+  poiStore,
+  onFocus,
+}: {
+  poiStore: ReturnType<typeof usePois>;
+  /** Fired when a POI row is clicked — the map flies to it. */
+  onFocus?: (poi: Poi) => void;
+}) {
   const { items, add, update, remove } = poiStore;
   const [editId, setEditId] = useState<string | null>(null);
   const [f, setF] = useState({ ...EMPTY });
@@ -161,7 +168,14 @@ export function PoiEditor({ poiStore }: { poiStore: ReturnType<typeof usePois> }
       <div className="poied__list">
         {items.map((p) => (
           <div key={p.id} className={`poirow ${editId === p.id ? "poirow--on" : ""}`}>
-            <button className="poirow__main" onClick={() => edit(p.id)} title="Edit">
+            <button
+              className="poirow__main"
+              onClick={() => {
+                edit(p.id);
+                onFocus?.(p);
+              }}
+              title="Focus on map + edit"
+            >
               <span className="poirow__name">{p.name}</span>
               <span className="poirow__cat">{p.category.replace("asteroid-", "").replace("-", " ")}</span>
             </button>

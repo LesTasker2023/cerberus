@@ -65,6 +65,65 @@ fn screenshot(x: i32, y: i32, w: i32, h: i32) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Upscale factor applied before OCR. Windows OCR is strongly size-sensitive:
+/// small game text is where it invents `l→i` / `8→B` slips, so we hand it
+/// bigger, higher-contrast glyphs.
+const SCALE: i32 = 3;
+
+/// Clean a raw BGRA grab for OCR: grayscale → contrast-stretch → bilinear
+/// upscale by `SCALE`. Returns a fresh BGRA buffer (gray in all channels) plus
+/// its new dimensions. Contrast-stretch fixes the low light-on-dark contrast of
+/// the game HUD; upscaling gives the engine the glyph resolution it wants.
+#[cfg(windows)]
+fn preprocess(bgra: &[u8], w: i32, h: i32) -> (Vec<u8>, i32, i32) {
+    let (wu, hu) = (w as usize, h as usize);
+
+    // Grayscale (Rec.709 luma) while tracking the value range for stretching.
+    let mut gray = vec![0u8; wu * hu];
+    let (mut lo, mut hi) = (255u8, 0u8);
+    for i in 0..wu * hu {
+        let b = bgra[i * 4] as u32;
+        let g = bgra[i * 4 + 1] as u32;
+        let r = bgra[i * 4 + 2] as u32;
+        let l = ((r * 54 + g * 183 + b * 19) >> 8) as u8;
+        gray[i] = l;
+        lo = lo.min(l);
+        hi = hi.max(l);
+    }
+    // Linear contrast stretch lo..hi → 0..255.
+    let range = (hi as i32 - lo as i32).max(1);
+    for l in gray.iter_mut() {
+        *l = (((*l as i32 - lo as i32) * 255) / range).clamp(0, 255) as u8;
+    }
+
+    // Bilinear upscale.
+    let (nw, nh) = (w * SCALE, h * SCALE);
+    let (nwu, nhu) = (nw as usize, nh as usize);
+    let mut out = vec![0u8; nwu * nhu * 4];
+    let sample = |x: i32, y: i32| -> u8 {
+        gray[y.clamp(0, h - 1) as usize * wu + x.clamp(0, w - 1) as usize]
+    };
+    for oy in 0..nh {
+        let fy = (oy as f32 + 0.5) / SCALE as f32 - 0.5;
+        let y0 = fy.floor() as i32;
+        let wy = fy - y0 as f32;
+        for ox in 0..nw {
+            let fx = (ox as f32 + 0.5) / SCALE as f32 - 0.5;
+            let x0 = fx.floor() as i32;
+            let wx = fx - x0 as f32;
+            let top = sample(x0, y0) as f32 * (1.0 - wx) + sample(x0 + 1, y0) as f32 * wx;
+            let bot = sample(x0, y0 + 1) as f32 * (1.0 - wx) + sample(x0 + 1, y0 + 1) as f32 * wx;
+            let v = (top * (1.0 - wy) + bot * wy).round().clamp(0.0, 255.0) as u8;
+            let o = (oy as usize * nwu + ox as usize) * 4;
+            out[o] = v;
+            out[o + 1] = v;
+            out[o + 2] = v;
+            out[o + 3] = 255;
+        }
+    }
+    (out, nw, nh)
+}
+
 /// OCR a top-down BGRA buffer via the Windows OCR engine.
 #[cfg(windows)]
 fn recognize(bgra: &[u8], w: i32, h: i32) -> Result<String, String> {
@@ -73,6 +132,8 @@ fn recognize(bgra: &[u8], w: i32, h: i32) -> Result<String, String> {
     use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
     use windows::Media::Ocr::OcrEngine;
     use windows::Storage::Streams::DataWriter;
+
+    let (clean, cw, ch) = preprocess(bgra, w, h);
 
     // The WinRT OCR APIs need a COM apartment on this thread. Tauri command /
     // hotkey threads aren't guaranteed to have one, so ensure it (idempotent —
@@ -83,9 +144,9 @@ fn recognize(bgra: &[u8], w: i32, h: i32) -> Result<String, String> {
 
     (|| -> windows::core::Result<String> {
         let writer = DataWriter::new()?;
-        writer.WriteBytes(bgra)?;
+        writer.WriteBytes(&clean)?;
         let buffer = writer.DetachBuffer()?;
-        let bmp = SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, w, h)?;
+        let bmp = SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, cw, ch)?;
         let engine = OcrEngine::TryCreateFromUserProfileLanguages()?;
         let result = engine.RecognizeAsync(&bmp)?.get()?;
         Ok(result.Text()?.to_string())

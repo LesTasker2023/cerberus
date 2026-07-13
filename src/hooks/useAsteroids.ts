@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { invokeReady } from "../lib/invokeReady";
 
 /** Mirror of the Rust `Asteroid`. */
 export interface Asteroid {
@@ -33,7 +34,7 @@ export function useAsteroids() {
   const [items, setItems] = useState<Asteroid[]>([]);
 
   const refresh = useCallback(() => {
-    invoke<Asteroid[]>("list_asteroids").then(setItems).catch(() => {});
+    invokeReady<Asteroid[]>("list_asteroids").then(setItems).catch(() => {});
   }, []);
 
   useEffect(() => {

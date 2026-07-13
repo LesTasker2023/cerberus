@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { invokeReady } from "../lib/invokeReady";
 
 /** Mirror of the Rust `Poi`. */
 export interface Poi {
@@ -29,7 +30,7 @@ export function usePois() {
   const [items, setItems] = useState<Poi[]>([]);
 
   const refresh = useCallback(() => {
-    invoke<Poi[]>("list_pois").then(setItems).catch(() => {});
+    invokeReady<Poi[]>("list_pois").then(setItems).catch(() => {});
   }, []);
 
   useEffect(() => {

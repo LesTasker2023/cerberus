@@ -15,10 +15,15 @@ interface Line {
   at: string;
 }
 
-/** Pull an [..., x, y, z, ...] triple out of a System position line. */
+/**
+ * Pull an [..., x, y, z, ...] triple out of a position line. Scans the whole raw
+ * line for the first bracket holding 3+ integers (e.g. `[Space, 58381, 71438,
+ * -173]`) — the same lenient rule the Rust capture path uses. We don't gate on
+ * the channel token: only position lines carry a coordinate bracket, and the
+ * strict `System`-only check was silently dropping real position updates.
+ */
 function coordsFrom(line: Line): { x: number; y: number; z: number } | null {
-  if ((line.channel ?? "").toLowerCase() !== "system") return null;
-  let rest = line.text || line.raw;
+  let rest = line.raw || line.text || "";
   while (true) {
     const open = rest.indexOf("[");
     if (open < 0) break;

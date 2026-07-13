@@ -3,6 +3,7 @@
 //! logging, maps, clan sync) lands in later increments.
 
 mod asteroids;
+mod combat;
 mod input;
 mod ocr;
 mod poi;
@@ -49,8 +50,10 @@ struct AppState {
     asteroids: asteroids::AsteroidStore,
     pois: poi::PoiStore,
     capture: Mutex<CaptureMeta>,
-    /// Where the capture-box geometry is persisted.
-    cap_path: PathBuf,
+    /// Live combat/hunt tracker state.
+    combat: combat::CombatState,
+    /// Finished mob encounters (positions, HP, loot, skills).
+    encounters: combat::EncounterStore,
 }
 
 /// Persisted position + size of the OCR capture box.
@@ -68,10 +71,9 @@ fn load_cap_geom(path: &PathBuf) -> Option<CapGeom> {
         .and_then(|j| serde_json::from_str(&j).ok())
 }
 
-/// Write the capregion window's current geometry to disk.
-fn persist_cap_geom(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let Some(w) = app.get_webview_window("capregion") else {
+/// Write a capture window's current geometry to disk.
+fn persist_geom(app: &AppHandle, label: &str, path: &std::path::Path) {
+    let Some(w) = app.get_webview_window(label) else {
         return;
     };
     if let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) {
@@ -82,7 +84,7 @@ fn persist_cap_geom(app: &AppHandle) {
             h: size.height,
         };
         if let Ok(json) = serde_json::to_string(&geom) {
-            let _ = std::fs::write(&state.cap_path, json);
+            let _ = std::fs::write(path, json);
         }
     }
 }
@@ -298,6 +300,13 @@ fn capture_coords(state: &AppState) -> Result<Coords, String> {
     found.ok_or_else(|| "No position detected. Is the location key bound to `<` in-game?".into())
 }
 
+/// Fire the position key and return the freshly captured coordinates. Backs the
+/// map's click-to-measure: ping the player's live position on demand.
+#[tauri::command]
+fn capture_position(state: State<'_, AppState>) -> Result<Coords, String> {
+    capture_coords(&state)
+}
+
 /// Short type code for auto-naming an unlabelled rock.
 fn short_code(category: &str) -> &'static str {
     match category {
@@ -449,19 +458,71 @@ fn capture_and_log(
     log_at_position(&app, &state)
 }
 
+/// Live visibility of the always-on-top overlays — drives the HUD dock's
+/// active-state indicators.
+#[derive(Serialize, Clone)]
+struct OverlayStates {
+    panel: bool,
+    capregion: bool,
+    radar: bool,
+    dock: bool,
+}
+
+fn overlay_states_of(app: &AppHandle) -> OverlayStates {
+    let vis = |l: &str| {
+        app.get_webview_window(l)
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false)
+    };
+    OverlayStates {
+        panel: vis("panel"),
+        capregion: vis("capregion"),
+        radar: vis("radar"),
+        dock: vis("dock"),
+    }
+}
+
+fn emit_overlay_states(app: &AppHandle) {
+    let _ = app.emit("overlays:changed", overlay_states_of(app));
+}
+
 /// Show/hide a window by label. Returns the new visibility.
 fn toggle_window(app: &AppHandle, label: &str) -> Result<bool, String> {
     let w = app
         .get_webview_window(label)
         .ok_or_else(|| format!("{label} window not found"))?;
-    if w.is_visible().unwrap_or(false) {
+    let shown = if w.is_visible().unwrap_or(false) {
         w.hide().map_err(|e| e.to_string())?;
-        Ok(false)
+        false
     } else {
         w.show().map_err(|e| e.to_string())?;
         let _ = w.set_focus();
-        Ok(true)
+        true
+    };
+    emit_overlay_states(app);
+    Ok(shown)
+}
+
+/// Current overlay visibility, for the dock to sync its buttons on load.
+#[tauri::command]
+fn overlay_states(app: AppHandle) -> OverlayStates {
+    overlay_states_of(&app)
+}
+
+/// Hide a window by label + broadcast the change (used by overlays' own close
+/// buttons so the dock stays in sync).
+#[tauri::command]
+fn hide_window(app: AppHandle, label: String) {
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.hide();
     }
+    emit_overlay_states(&app);
+}
+
+/// Show/hide the floating HUD dock.
+#[tauri::command]
+fn toggle_dock(app: AppHandle) -> Result<bool, String> {
+    toggle_window(&app, "dock")
 }
 
 /// Show/hide the always-on-top overlay panel.
@@ -482,22 +543,124 @@ fn toggle_radar(app: AppHandle) -> Result<bool, String> {
     toggle_window(&app, "radar")
 }
 
-/// OCR the text inside the capture box's current rectangle.
+/// Show/hide the mob OCR capture box.
 #[tauri::command]
-fn read_region(app: AppHandle) -> Result<String, String> {
+fn toggle_mobcap(app: AppHandle) -> Result<bool, String> {
+    toggle_window(&app, "mobcap")
+}
+
+/// All finished mob encounters, newest first.
+#[tauri::command]
+fn list_encounters(state: State<'_, AppState>) -> Vec<combat::Encounter> {
+    state.encounters.list()
+}
+
+/// The in-progress encounter, if any — lets the UI hydrate on load.
+#[tauri::command]
+fn current_encounter(state: State<'_, AppState>) -> Option<combat::Encounter> {
+    state
+        .combat
+        .active
+        .lock()
+        .expect("combat poisoned")
+        .as_ref()
+        .map(|a| a.enc.clone())
+}
+
+/// Delete a stored encounter by id.
+#[tauri::command]
+fn delete_encounter(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.encounters.remove(&id)?;
+    let _ = app.emit("encounters:changed", ());
+    Ok(())
+}
+
+/// Clear the whole encounter log.
+#[tauri::command]
+fn clear_encounters(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.encounters.clear()?;
+    let _ = app.emit("encounters:changed", ());
+    Ok(())
+}
+
+/// Arm/disarm the combat logger. Shows/hides the engaged HUD and, when turning
+/// off, discards any in-progress encounter. Returns the new state.
+#[tauri::command]
+fn toggle_combat(app: AppHandle, state: State<'_, AppState>) -> bool {
+    let now = !state.combat.enabled.load(Ordering::Relaxed);
+    state.combat.enabled.store(now, Ordering::Relaxed);
+    if !now {
+        *state.combat.active.lock().expect("combat poisoned") = None;
+        let none: Option<combat::Encounter> = None;
+        let _ = app.emit("encounter:update", &none);
+    }
+    let _ = app.emit("combat:enabled", now);
+    if let Some(w) = app.get_webview_window("combathud") {
+        if now {
+            let _ = w.show();
+        } else {
+            let _ = w.hide();
+        }
+    }
+    now
+}
+
+/// Current combat-logger state (for the UI to hydrate on load).
+#[tauri::command]
+fn combat_enabled(state: State<'_, AppState>) -> bool {
+    state.combat.enabled.load(Ordering::Relaxed)
+}
+
+/// Close the splash window and reveal the main window (called once the UI loads).
+#[tauri::command]
+fn finish_splash(app: AppHandle) {
+    if let Some(s) = app.get_webview_window("splash") {
+        let _ = s.close();
+    }
+    if let Some(m) = app.get_webview_window("main") {
+        let _ = m.show();
+        let _ = m.set_focus();
+    }
+}
+
+/// OCR the pixels inside a capture window's rectangle (inset past its frame).
+fn read_window_region(app: &AppHandle, label: &str) -> Result<String, String> {
     let w = app
-        .get_webview_window("capregion")
+        .get_webview_window(label)
         .ok_or("Capture box unavailable")?;
     let pos = w.outer_position().map_err(|e| e.to_string())?;
     let size = w.outer_size().map_err(|e| e.to_string())?;
-    // Inset past the visible border so we don't OCR our own frame.
+    let sf = w.scale_factor().map_err(|e| e.to_string())?;
     let inset = 5i32;
+    // Skip the viewfinder's own title bar (`.capbox__bar`, 18 CSS px) so the OCR
+    // never reads its "MOB OCR" / "OCR CAPTURE" label as part of the panel.
+    let bar = (18.0 * sf).round() as i32;
+    let top = inset + bar;
     let cw = size.width as i32 - inset * 2;
-    let ch = size.height as i32 - inset * 2;
+    let ch = size.height as i32 - top - inset;
     if cw < 4 || ch < 4 {
         return Err("Capture box is too small".into());
     }
-    ocr::read_region(pos.x + inset, pos.y + inset, cw, ch)
+    ocr::read_region(pos.x + inset, pos.y + top, cw, ch)
+}
+
+/// OCR the mob capture box and parse it into (name, level, maturity). Used by
+/// the combat tracker to identify each mob at the start of an encounter.
+fn try_ocr_mob_identity(app: &AppHandle) -> Option<(String, Option<i64>, String)> {
+    let text = read_window_region(app, "mobcap").ok()?;
+    combat::parse_mob_identity(&text)
+}
+
+/// OCR the text inside the rock capture box.
+#[tauri::command]
+fn read_region(app: AppHandle) -> Result<String, String> {
+    read_window_region(&app, "capregion")
+}
+
+/// OCR the text inside the mob capture box.
+#[tauri::command]
+fn read_mob_region(app: AppHandle) -> Result<String, String> {
+    read_window_region(&app, "mobcap")
 }
 
 /// All logged asteroids, newest first.
@@ -593,6 +756,7 @@ pub fn run() {
             let settings = load_settings(&settings_path);
 
             let cap_path = dir.join("capregion.json");
+            let mob_cap_path = dir.join("mobcap.json");
             app.manage(AppState {
                 settings_path,
                 settings: Mutex::new(settings),
@@ -600,25 +764,29 @@ pub fn run() {
                 asteroids: asteroids::AsteroidStore::open(dir.join("asteroids.json")),
                 pois: poi::PoiStore::open(dir.join("pois.json")),
                 capture: Mutex::new(CaptureMeta::default()),
-                cap_path: cap_path.clone(),
+                combat: combat::CombatState::default(),
+                encounters: combat::EncounterStore::open(dir.join("encounters.json")),
             });
 
-            // Restore the capture box to its last position/size, and keep it in
-            // sync as the user drags/resizes it.
-            if let Some(cap_win) = app.get_webview_window("capregion") {
-                if let Some(g) = load_cap_geom(&cap_path) {
-                    let _ = cap_win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
-                    let _ = cap_win.set_size(tauri::PhysicalSize::new(g.w, g.h));
-                }
-                let handle = app.handle().clone();
-                cap_win.on_window_event(move |event| {
-                    if matches!(
-                        event,
-                        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
-                    ) {
-                        persist_cap_geom(&handle);
+            // Restore both capture boxes to their last position/size and keep
+            // them persisted as the user drags/resizes.
+            for (label, path) in [("capregion", cap_path), ("mobcap", mob_cap_path)] {
+                if let Some(win) = app.get_webview_window(label) {
+                    if let Some(g) = load_cap_geom(&path) {
+                        let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+                        let _ = win.set_size(tauri::PhysicalSize::new(g.w, g.h));
                     }
-                });
+                    let handle = app.handle().clone();
+                    let label = label.to_string();
+                    win.on_window_event(move |event| {
+                        if matches!(
+                            event,
+                            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                        ) {
+                            persist_geom(&handle, &label, &path);
+                        }
+                    });
+                }
             }
 
             // Park the radar top-right by default (where EU's radar sits).
@@ -628,6 +796,69 @@ pub fn run() {
                     let win_w = (300.0 * mon.scale_factor()) as i32;
                     let _ = radar.set_position(tauri::PhysicalPosition::new(sw - win_w - 24, 64));
                 }
+            }
+
+            // Park the HUD dock top-centre by default.
+            if let Some(dock) = app.get_webview_window("dock") {
+                if let Ok(Some(mon)) = dock.primary_monitor() {
+                    let sw = mon.size().width as i32;
+                    let win_w = (232.0 * mon.scale_factor()) as i32;
+                    let _ = dock.set_position(tauri::PhysicalPosition::new((sw - win_w) / 2, 48));
+                }
+            }
+
+            // Close-to-tray: X (or Alt+F4) hides the main window instead of
+            // quitting; the app keeps running in the system tray.
+            if let Some(main) = app.get_webview_window("main") {
+                let hide_target = main.clone();
+                main.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = hide_target.hide();
+                    }
+                });
+            }
+
+            // System tray — left-click reopens, menu offers Show / Quit.
+            {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+                let show_i = MenuItem::with_id(app, "show", "Show Cerberus", true, None::<&str>)?;
+                let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+                let show_main = |app: &AppHandle| {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.unminimize();
+                        let _ = w.set_focus();
+                    }
+                };
+
+                let mut tray = TrayIconBuilder::with_id("cerberus-tray")
+                    .tooltip("Cerberus")
+                    .menu(&menu)
+                    .show_menu_on_left_click(false);
+                if let Some(icon) = app.default_window_icon() {
+                    tray = tray.icon(icon.clone());
+                }
+                tray.on_menu_event(move |app, event| match event.id.as_ref() {
+                    "show" => show_main(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(move |tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main(tray.app_handle());
+                    }
+                })
+                .build(app)?;
             }
 
             // Global capture hotkey — Ctrl+Shift+C. Fires while the game is
@@ -668,10 +899,23 @@ pub fn run() {
             delete_poi,
             set_capture_meta,
             capture_and_log,
+            capture_position,
             toggle_panel,
             toggle_capregion,
             toggle_radar,
+            toggle_mobcap,
+            toggle_dock,
+            overlay_states,
+            hide_window,
+            finish_splash,
             read_region,
+            read_mob_region,
+            list_encounters,
+            current_encounter,
+            delete_encounter,
+            clear_encounters,
+            toggle_combat,
+            combat_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

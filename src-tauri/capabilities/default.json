@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main", "panel", "capregion", "radar"],
+  "windows": ["main", "panel", "capregion", "mobcap", "radar", "dock", "combathud", "splash"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -16,6 +16,11 @@
     "core:window:allow-hide",
     "core:window:allow-show",
     "core:window:allow-set-focus",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-outer-position",
+    "core:window:allow-scale-factor",
+    "core:window:allow-current-monitor",
     "core:window:allow-start-dragging",
     "updater:default",
     "process:allow-restart"

@@ -1,15 +1,21 @@
 import howlingMine from "../data/howlingMine.json";
 import type { MapPoi } from "../components/MapDetail";
 import type { Asteroid } from "../hooks/useAsteroids";
+import type { Encounter } from "../hooks/useEncounters";
 import type { Poi } from "../hooks/usePois";
 
 const HM = howlingMine as Omit<MapPoi, "id" | "logged">[];
 
 /**
  * Merge the static Howling Mine context, the editable POI store (stations /
- * gates / landmarks), and the live logged rocks into one map POI list.
+ * gates / landmarks), the logged rocks, and logged mob encounters into one map
+ * POI list. Mob encounters plot at the position captured when the fight started.
  */
-export function combinePois(items: Asteroid[], storePois: Poi[]): MapPoi[] {
+export function combinePois(
+  items: Asteroid[],
+  storePois: Poi[],
+  mobs: Encounter[] = [],
+): MapPoi[] {
   const hm: MapPoi[] = HM.map((p, i) => ({ ...p, id: `hm-${i}`, logged: false }));
   const managed: MapPoi[] = storePois.map((p) => ({
     id: p.id,
@@ -31,5 +37,17 @@ export function combinePois(items: Asteroid[], storePois: Poi[]): MapPoi[] {
     pvpLootable: a.pvp_lootable,
     logged: true,
   }));
-  return [...hm, ...managed, ...logged];
+  const mobPois: MapPoi[] = mobs
+    .filter((m) => m.eu_x != null && m.eu_y != null && m.eu_z != null)
+    .map((m) => ({
+      id: `mob-${m.id}`,
+      name: m.name || "Mob",
+      category: "mob",
+      euX: m.eu_x as number,
+      euY: m.eu_y as number,
+      euZ: m.eu_z as number,
+      pvpLootable: false,
+      logged: false,
+    }));
+  return [...hm, ...managed, ...logged, ...mobPois];
 }

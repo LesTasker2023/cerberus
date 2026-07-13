@@ -431,9 +431,10 @@ dependencies = [
 
 [[package]]
 name = "cerberus"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
+ "regex",
  "serde",
  "serde_json",
  "tauri",
