@@ -28,6 +28,11 @@ const CAT_COLOR: Record<string, number> = {
 };
 const M_BARE = 0x5b6470;
 
+/** Logged mobs within this many EU units of each other belong to the same spawn
+ *  area (single-link). Above it, a separate spawn sphere is drawn — so hunting a
+ *  new mob in another sector doesn't stretch one sphere across the map. */
+const MOB_CLUSTER_EU = 3000;
+
 /* ── Roman-numeral size helpers ── */
 function romanToInt(s: string): number {
   const m: Record<string, number> = { I: 1, V: 5, X: 10, L: 50 };
@@ -300,7 +305,8 @@ export function MapView({
     const meshes = new Map<string, THREE.Object3D[]>();
     const pickable: THREE.Mesh[] = [];
     const pvpZonePos: THREE.Vector3[] = [];
-    const mobPos: THREE.Vector3[] = [];
+    // EU position (for clustering) + three-space position (for drawing) per mob.
+    const mobPts: { eu: THREE.Vector3; three: THREE.Vector3 }[] = [];
     // Labels kept at a constant on-screen size so far POIs stay readable.
     const labels: THREE.Sprite[] = [];
 
@@ -368,7 +374,8 @@ export function MapView({
       }
       // The PVP zone hugs the bare-M anchor field (the belt skeleton).
       if (bare) pvpZonePos.push(pos);
-      if (p.category === "mob") mobPos.push(pos.clone());
+      if (p.category === "mob")
+        mobPts.push({ eu: new THREE.Vector3(p.euX, p.euY, p.euZ), three: pos.clone() });
       meshes.set(p.id, objs);
     }
 
@@ -384,43 +391,75 @@ export function MapView({
       scene.add(zoneMesh);
     }
 
-    // Mob spawn sphere — sized to span the two farthest logged mobs, centred on
-    // their midpoint, to pin down the middle of a spawn area.
-    if (mobPos.length >= 2) {
-      let a = mobPos[0];
-      let b = mobPos[1];
-      let maxD = -1;
-      for (let i = 0; i < mobPos.length; i++) {
-        for (let j = i + 1; j < mobPos.length; j++) {
-          const d2 = mobPos[i].distanceToSquared(mobPos[j]);
-          if (d2 > maxD) {
-            maxD = d2;
-            a = mobPos[i];
-            b = mobPos[j];
+    // Mob spawn spheres — cluster logged mobs by proximity (single-link in EU
+    // space) so each distinct spawn area gets its own sphere, spanning that
+    // cluster's two farthest points, rather than one sphere stretched across
+    // sectors.
+    if (mobPts.length) {
+      const n = mobPts.length;
+      const parent = Array.from({ length: n }, (_, i) => i);
+      const find = (i: number): number => {
+        while (parent[i] !== i) {
+          parent[i] = parent[parent[i]];
+          i = parent[i];
+        }
+        return i;
+      };
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          if (mobPts[i].eu.distanceTo(mobPts[j].eu) <= MOB_CLUSTER_EU) {
+            parent[find(i)] = find(j);
           }
         }
       }
-      const centre = a.clone().add(b).multiplyScalar(0.5);
-      const radius = a.distanceTo(b) / 2;
-      const spawn = new THREE.Mesh(
-        new THREE.SphereGeometry(radius, 24, 24),
-        new THREE.MeshBasicMaterial({
-          color: 0xf2683c,
-          transparent: true,
-          opacity: 0.09,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      );
-      spawn.position.copy(centre);
-      scene.add(spawn);
-      // Mark the computed spawn centre.
-      const core = new THREE.Mesh(
-        new THREE.SphereGeometry(0.03, 12, 12),
-        new THREE.MeshBasicMaterial({ color: 0xf2683c }),
-      );
-      core.position.copy(centre);
-      scene.add(core);
+      const clusters = new Map<number, THREE.Vector3[]>();
+      for (let i = 0; i < n; i++) {
+        const r = find(i);
+        let arr = clusters.get(r);
+        if (!arr) {
+          arr = [];
+          clusters.set(r, arr);
+        }
+        arr.push(mobPts[i].three);
+      }
+
+      const mobColor = 0xf2683c;
+      for (const pts of clusters.values()) {
+        // Farthest pair → sphere centre + radius (lone points get a small bubble).
+        let a = pts[0];
+        let b = pts[0];
+        let maxD = -1;
+        for (let i = 0; i < pts.length; i++) {
+          for (let j = i + 1; j < pts.length; j++) {
+            const d2 = pts[i].distanceToSquared(pts[j]);
+            if (d2 > maxD) {
+              maxD = d2;
+              a = pts[i];
+              b = pts[j];
+            }
+          }
+        }
+        const centre = a.clone().add(b).multiplyScalar(0.5);
+        const radius = Math.max(a.distanceTo(b) / 2, 0.06);
+        const spawn = new THREE.Mesh(
+          new THREE.SphereGeometry(radius, 24, 24),
+          new THREE.MeshBasicMaterial({
+            color: mobColor,
+            transparent: true,
+            opacity: 0.09,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        spawn.position.copy(centre);
+        scene.add(spawn);
+        const core = new THREE.Mesh(
+          new THREE.SphereGeometry(0.03, 12, 12),
+          new THREE.MeshBasicMaterial({ color: mobColor }),
+        );
+        core.position.copy(centre);
+        scene.add(core);
+      }
     }
 
     // Player "YOU" marker — gold, pulsing; positioned by the effect below.
