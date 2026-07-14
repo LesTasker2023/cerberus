@@ -96,9 +96,6 @@ function groupOf(p: MapPoi): string {
   return p.category;
 }
 
-/** Compact EU distance for the ring readout (e.g. 3800 → "3.8k"). */
-const fmtEU = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`);
-
 /** Raw coord units per one in-game AU — calibrated from two known waypoints
  *  (Δ≈499 raw ⇒ game shows 0.500 AU). */
 const EU_PER_AU = 1000;
@@ -135,6 +132,14 @@ const LABEL_SIZE_DEFAULT = 0.04;
 const LABEL_SIZE_MIN = 0.015;
 const LABEL_SIZE_MAX = 0.12;
 const LABEL_STORE_KEY = "cerberus.labelSize";
+
+/** All markers are built at one base radius and scaled uniformly by the marker
+ *  slider (very small → normal), persisted per machine. */
+const MARKER_BASE = 0.03;
+const MARKER_SCALE_DEFAULT = 0.5;
+const MARKER_SCALE_MIN = 0.15;
+const MARKER_SCALE_MAX = 1;
+const MARKER_STORE_KEY = "cerberus.markerScale";
 
 /** Render text to a high-res canvas texture (crisp when scaled up on screen). */
 function drawLabelTexture(text: string, color: string): { tex: THREE.CanvasTexture; aspect: number } {
@@ -197,16 +202,6 @@ export function MapView({
     [store.items, poiStore.items, mobStore?.items],
   );
 
-  const sizeBounds = useMemo<[number, number]>(() => {
-    const vals = pois
-      .filter((p) => p.category === "asteroid-m")
-      .map((p) => sizeOf(p.name))
-      .filter((v): v is number => v != null);
-    return vals.length ? [Math.min(...vals), Math.max(...vals)] : [1, 20];
-  }, [pois]);
-  const [range, setRange] = useState<[number, number]>(sizeBounds);
-  useEffect(() => setRange(sizeBounds), [sizeBounds]);
-
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -221,13 +216,18 @@ export function MapView({
     });
 
   const [selected, setSelected] = useState<MapPoi | null>(null);
-  const [ringInfo, setRingInfo] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [wpChip, setWpChip] = useState<string | null>(null);
+  const [radarFilters, setRadarFilters] = useState(false);
   // Click-to-measure: the player position captured on the last POI click, the
   // straight-line distance to that POI, and a bump to re-fire on re-clicks.
   const [measurePos, setMeasurePos] = useState<{ x: number; y: number; z: number } | null>(null);
   const [measureTick, setMeasureTick] = useState(0);
+  // Minimap auto-ping: fire the `<` position key on an interval; `pingPos` holds
+  // the latest fix so the marker + coords stay fresh even without the watcher.
+  const [pinging, setPinging] = useState(false);
+  const [pingPos, setPingPos] = useState<{ x: number; y: number; z: number } | null>(null);
+  const [coordsCopied, setCoordsCopied] = useState(false);
   // Per-machine label size (persisted). A ref feeds the render loop so the
   // slider updates live without rebuilding the scene.
   const [labelSize, setLabelSize] = useState<number>(() => {
@@ -236,17 +236,21 @@ export function MapView({
   });
   const labelSizeRef = useRef(labelSize);
   labelSizeRef.current = labelSize;
+  const [markerScale, setMarkerScale] = useState<number>(() => {
+    const v = Number(localStorage.getItem(MARKER_STORE_KEY));
+    return v >= MARKER_SCALE_MIN && v <= MARKER_SCALE_MAX ? v : MARKER_SCALE_DEFAULT;
+  });
+  const markerScaleRef = useRef(markerScale);
+  markerScaleRef.current = markerScale;
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<{
     meshes: Map<string, THREE.Object3D[]>;
+    pickable: THREE.Mesh[];
     player: THREE.Group;
     camera: THREE.PerspectiveCamera;
     controls: OrbitControls;
     center: { x: number; y: number; z: number };
     scale: number;
-    stem: THREE.Line | null;
-    base: THREE.Mesh | null;
-    datumY: number;
     measureLine: THREE.Line;
     measureLabel: THREE.Sprite;
     dispose: () => void;
@@ -317,50 +321,26 @@ export function MapView({
       const spacest = p.category === "space-station";
       const gate = p.category === "warp-gate";
       const zone = p.category === "outlaw-zone";
-      const mob = p.category === "mob";
       const color = bare ? M_BARE : CAT_COLOR[p.category] ?? 0x888888;
-      const radius = station
-        ? 0.075
-        : spacest
-          ? 0.06
-          : gate
-            ? 0.055
-            : zone
-              ? 0.055
-              : bare
-                ? 0.022
-                : mob
-                  ? 0.009
-                  : p.logged
-                    ? 0.038
-                    : 0.028;
+      // Uniform base radius; the marker slider scales every marker together.
+      const radius = MARKER_BASE;
       const bright = zone || gate || spacest || p.logged;
 
       const geo = zone
         ? new THREE.OctahedronGeometry(radius)
         : gate
-          ? new THREE.TorusGeometry(radius, 0.022, 8, 24) // warp gates read as rings
+          ? new THREE.TorusGeometry(radius, radius * 0.4, 8, 24) // warp gates read as rings
           : new THREE.SphereGeometry(radius, 16, 16);
       const mesh = new THREE.Mesh(
         geo,
         new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: bright ? 0.8 : bare ? 0.3 : 0.45, roughness: 0.4, metalness: 0.6 }),
       );
       mesh.position.copy(pos);
+      mesh.scale.setScalar(markerScaleRef.current);
       mesh.userData.poiId = p.id;
       scene.add(mesh);
       pickable.push(mesh);
       const objs: THREE.Object3D[] = [mesh];
-
-      // Translucent zone halo so outlaw areas stand out against the belt.
-      if (zone) {
-        const halo = new THREE.Mesh(
-          new THREE.SphereGeometry(0.15, 16, 16),
-          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.09, depthWrite: false }),
-        );
-        halo.position.copy(pos);
-        scene.add(halo);
-        objs.push(halo);
-      }
 
       const label = labelFor(p);
       if (label) {
@@ -453,12 +433,6 @@ export function MapView({
         );
         spawn.position.copy(centre);
         scene.add(spawn);
-        const core = new THREE.Mesh(
-          new THREE.SphereGeometry(0.03, 12, 12),
-          new THREE.MeshBasicMaterial({ color: mobColor }),
-        );
-        core.position.copy(centre);
-        scene.add(core);
       }
     }
 
@@ -496,56 +470,6 @@ export function MapView({
     measureLabel.renderOrder = 1000;
     scene.add(measureLabel);
     labels.push(measureLabel);
-
-    // Radar extras: a reference grid at the EU z=0 datum (altitude zero), range
-    // rings around the player, and a vertical stem from YOU to the datum so
-    // height above/below the plane reads at a glance.
-    let radarStem: THREE.Line | null = null;
-    let radarBase: THREE.Mesh | null = null;
-    const datumY = -center.z * scale;
-    if (compact) {
-      const grid = new THREE.GridHelper(8, 16, 0x35404e, 0x1e252e);
-      grid.position.y = datumY;
-      const gm = grid.material as THREE.Material;
-      gm.transparent = true;
-      gm.opacity = 0.45;
-      scene.add(grid);
-
-      const RING_R = [0.35, 0.7, 1.05];
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: 0x4a5563,
-        transparent: true,
-        opacity: 0.4,
-        side: THREE.DoubleSide,
-      });
-      for (const rr of RING_R) {
-        const ring = new THREE.Mesh(new THREE.RingGeometry(rr - 0.005, rr, 80), ringMat);
-        ring.rotation.x = -Math.PI / 2;
-        playerGroup.add(ring);
-      }
-      setRingInfo(RING_R.map((rr) => fmtEU(rr / scale)).join(" · "));
-
-      radarStem = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(0, 0, 0),
-          new THREE.Vector3(0, -1, 0),
-        ]),
-        new THREE.LineBasicMaterial({ color: 0xffd54a, transparent: true, opacity: 0.5 }),
-      );
-      playerGroup.add(radarStem);
-
-      radarBase = new THREE.Mesh(
-        new THREE.RingGeometry(0.03, 0.045, 24),
-        new THREE.MeshBasicMaterial({
-          color: 0xffd54a,
-          transparent: true,
-          opacity: 0.55,
-          side: THREE.DoubleSide,
-        }),
-      );
-      radarBase.rotation.x = -Math.PI / 2;
-      playerGroup.add(radarBase);
-    }
 
     // Interaction
     const raycaster = new THREE.Raycaster();
@@ -622,14 +546,12 @@ export function MapView({
 
     sceneRef.current = {
       meshes,
+      pickable,
       player: playerGroup,
       camera,
       controls,
       center,
       scale,
-      stem: radarStem,
-      base: radarBase,
-      datumY,
       measureLine,
       measureLabel,
       dispose: () => {
@@ -651,7 +573,7 @@ export function MapView({
     const d = sceneRef.current;
     if (!d) return;
     const eff =
-      measurePos ?? (playerPos ? { x: playerPos.x, y: playerPos.y, z: playerPos.z } : null);
+      measurePos ?? pingPos ?? (playerPos ? { x: playerPos.x, y: playerPos.y, z: playerPos.z } : null);
     if (!eff) {
       d.player.visible = false;
       d.measureLine.visible = false;
@@ -668,11 +590,6 @@ export function MapView({
       d.camera.position.add(delta);
       d.controls.target.add(delta);
       d.controls.update();
-    }
-    if (compact) {
-      const drop = tgt.y - d.datumY;
-      if (d.stem) d.stem.scale.y = drop || 0.0001;
-      if (d.base) d.base.position.y = -drop;
     }
     // Range line from YOU to the selected POI, with a distance · ETA readout
     // drawn at its midpoint. Uses the effective position, so it appears at once
@@ -692,7 +609,26 @@ export function MapView({
       d.measureLine.visible = false;
       d.measureLabel.visible = false;
     }
-  }, [playerPos, measurePos, selected, pois, compact]);
+  }, [playerPos, measurePos, pingPos, selected, pois, compact]);
+
+  // Auto-ping: while on, fire the `<` position key every 5s and keep the latest
+  // fix. Feeds the marker + coords display; capture also nudges the log watcher.
+  useEffect(() => {
+    if (!pinging) return;
+    let cancelled = false;
+    const ping = () =>
+      invoke<{ x: number; y: number; z: number }>("capture_position")
+        .then((c) => {
+          if (!cancelled) setPingPos(c);
+        })
+        .catch(() => {});
+    ping();
+    const id = setInterval(ping, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [pinging]);
 
   // When a POI is clicked, fire the `<` position key and store the captured
   // player position; the range line + midpoint readout react to it.
@@ -729,6 +665,12 @@ export function MapView({
   useEffect(() => {
     localStorage.setItem(LABEL_STORE_KEY, String(labelSize));
   }, [labelSize]);
+
+  // Persist marker scale and rescale every marker live as the slider moves.
+  useEffect(() => {
+    localStorage.setItem(MARKER_STORE_KEY, String(markerScale));
+    sceneRef.current?.pickable.forEach((m) => m.scale.setScalar(markerScale));
+  }, [markerScale]);
   useEffect(() => {
     const h = (e: StorageEvent) => {
       if (e.key !== LABEL_STORE_KEY || !e.newValue) return;
@@ -739,17 +681,15 @@ export function MapView({
     return () => window.removeEventListener("storage", h);
   }, []);
 
-  // Visibility = type toggle AND size range (M-types only).
+  // Visibility = type-filter toggles.
   useEffect(() => {
     const data = sceneRef.current;
     if (!data) return;
     for (const p of pois) {
-      const sz = p.category === "asteroid-m" ? sizeOf(p.name) : null;
-      const inRange = sz == null || (sz >= range[0] && sz <= range[1]);
-      const visible = !hidden.has(groupOf(p)) && inRange;
+      const visible = !hidden.has(groupOf(p));
       data.meshes.get(p.id)?.forEach((o) => (o.visible = visible));
     }
-  }, [range, pois, hidden]);
+  }, [pois, hidden]);
 
   const loggedCount = store.items.length;
 
@@ -765,6 +705,20 @@ export function MapView({
     d.camera.position.copy(p).add(dir.multiplyScalar(2.5));
     d.controls.update();
     setSelected(pois.find((mp) => mp.id === poi.id) ?? null);
+  };
+
+  // Live player coords for the minimap readout (latest measure/ping/watcher fix).
+  const coords =
+    measurePos ?? pingPos ?? (playerPos ? { x: playerPos.x, y: playerPos.y, z: playerPos.z } : null);
+  const copyCoords = () => {
+    if (!coords) return;
+    navigator.clipboard
+      .writeText(`/wp [Space, ${coords.x}, ${coords.y}, ${coords.z}, You]`)
+      .then(() => {
+        setCoordsCopied(true);
+        setTimeout(() => setCoordsCopied(false), 1200);
+      })
+      .catch(() => {});
   };
 
   // Recentre the radar on the player, resetting to a clean top-down view.
@@ -812,16 +766,126 @@ export function MapView({
     }
   };
 
+  const legendGroups = LEGEND.filter((g) => counts[g.key]);
+
   return (
     <div className="map">
-      {compact ? null : <PoiEditor poiStore={poiStore} onFocus={focusPoi} />}
+      {!compact && (
+        <aside className="mappanel">
+          <div className="mappanel__stats">
+            <span className="mstat">
+              Belt <b>{pois.filter(isBareM).length}</b>
+            </span>
+            <span className="mstat">
+              Logged <b>{loggedCount}</b>
+            </span>
+            <span className="mstat mstat--outlaw">
+              Outlaw <b>{pois.filter((p) => p.category === "outlaw-zone").length}</b>
+            </span>
+          </div>
+
+          <div className="mappanel__sec">
+            <div className="mappanel__lbl">Filters</div>
+            <div className="filterlist">
+              {legendGroups.map((g) => (
+                <button
+                  key={g.key}
+                  className={`legrow ${hidden.has(g.key) ? "legrow--off" : ""}`}
+                  onClick={() => toggle(g.key)}
+                >
+                  <span className="legrow__sw" style={{ background: g.color }} />
+                  <span className="legrow__label">{g.label}</span>
+                  <span className="legrow__count">{counts[g.key]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mappanel__sec">
+            <div className="mappanel__lbl">
+              Markers <span className="mappanel__val">{Math.round(markerScale * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              className="mapslider"
+              min={Math.round(MARKER_SCALE_MIN * 100)}
+              max={Math.round(MARKER_SCALE_MAX * 100)}
+              value={Math.round(markerScale * 100)}
+              aria-label="Marker size"
+              onChange={(e) => setMarkerScale(Number(e.target.value) / 100)}
+            />
+            <div className="mappanel__lbl mappanel__lbl--sub">
+              Labels <span className="mappanel__val">{Math.round((labelSize / LABEL_SIZE_DEFAULT) * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              className="mapslider"
+              min={Math.round(LABEL_SIZE_MIN * 1000)}
+              max={Math.round(LABEL_SIZE_MAX * 1000)}
+              value={Math.round(labelSize * 1000)}
+              aria-label="Label size"
+              onChange={(e) => setLabelSize(Number(e.target.value) / 1000)}
+            />
+          </div>
+
+          <PoiEditor poiStore={poiStore} onFocus={focusPoi} />
+        </aside>
+      )}
 
       <div className="map__view">
       <div ref={mountRef} className="map__canvas" />
 
       {compact ? (
         <>
-          {ringInfo && <div className="radarscale">◎ {ringInfo}</div>}
+          <div className="radartl">
+            <button
+              className="radarcoords"
+              onClick={copyCoords}
+              disabled={!coords}
+              title="Copy waypoint"
+            >
+              ⌖ {coords ? `${coords.x}, ${coords.y}, ${coords.z}` : "no fix"}
+              {coordsCopied ? " ✓" : ""}
+            </button>
+          </div>
+
+          <button
+            className={`radarfilter ${radarFilters ? "radarfilter--on" : ""}`}
+            onClick={() => setRadarFilters((f) => !f)}
+            title="Filters"
+            aria-label="Filters"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 5h18l-7 8v6l-4-2v-4Z" />
+            </svg>
+          </button>
+          {radarFilters && (
+            <div className="radarfilters">
+              {legendGroups.map((g) => (
+                <button
+                  key={g.key}
+                  className={`legrow ${hidden.has(g.key) ? "legrow--off" : ""}`}
+                  onClick={() => toggle(g.key)}
+                >
+                  <span className="legrow__sw" style={{ background: g.color }} />
+                  <span className="legrow__label">{g.label}</span>
+                  <span className="legrow__count">{counts[g.key]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            className={`radarping ${pinging ? "radarping--on" : ""}`}
+            onClick={() => setPinging((p) => !p)}
+            title={pinging ? "Auto-ping location: ON (every 5s)" : "Auto-ping location (every 5s)"}
+            aria-label="Auto-ping location"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+              <path d="M7.6 7.6a6.2 6.2 0 0 0 0 8.8M16.4 16.4a6.2 6.2 0 0 0 0-8.8M4.9 4.9a9.9 9.9 0 0 0 0 14.2M19.1 19.1a9.9 9.9 0 0 0 0-14.2" />
+            </svg>
+          </button>
+
           {wpChip && (
             <div className="radarwp" role="status">
               🛰 {wpChip} · WP copied
@@ -855,85 +919,7 @@ export function MapView({
           </button>
         </>
       ) : (
-        <>
-      <div className="map__hud">
-        <span className="map__stat">
-          Belt <b>{pois.filter(isBareM).length}</b>
-        </span>
-        <span className="map__stat">
-          Logged <b>{loggedCount}</b>
-        </span>
-        <span className="map__stat map__stat--outlaw">
-          Outlaw <b>{pois.filter((p) => p.category === "outlaw-zone").length}</b>
-        </span>
-      </div>
-
-      <div className="map__controls">
-        <div className="map__size">
-          <div className="map__sizeHead">
-            <span>Labels</span>
-            <span className="map__sizeVal">
-              {Math.round((labelSize / LABEL_SIZE_DEFAULT) * 100)}%
-            </span>
-          </div>
-          <div className="map__range">
-            <input
-              type="range"
-              min={Math.round(LABEL_SIZE_MIN * 1000)}
-              max={Math.round(LABEL_SIZE_MAX * 1000)}
-              value={Math.round(labelSize * 1000)}
-              aria-label="Label size"
-              onChange={(e) => setLabelSize(Number(e.target.value) / 1000)}
-            />
-          </div>
-        </div>
-
-        {sizeBounds[1] > sizeBounds[0] && (
-          <div className="map__size">
-            <div className="map__sizeHead">
-              <span>Size</span>
-              <span className="map__sizeVal">
-                {intToRoman(range[0])} – {intToRoman(range[1])}
-              </span>
-            </div>
-            <div className="map__range">
-              <input
-                type="range"
-                min={sizeBounds[0]}
-                max={sizeBounds[1]}
-                value={range[0]}
-                aria-label="Minimum size"
-                onChange={(e) => setRange(([, hi]) => [Math.min(Number(e.target.value), hi), hi])}
-              />
-              <input
-                type="range"
-                min={sizeBounds[0]}
-                max={sizeBounds[1]}
-                value={range[1]}
-                aria-label="Maximum size"
-                onChange={(e) => setRange(([lo]) => [lo, Math.max(Number(e.target.value), lo)])}
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="map__legend">
-        {LEGEND.filter((g) => counts[g.key]).map((g) => (
-          <button
-            key={g.key}
-            className={`legrow ${hidden.has(g.key) ? "legrow--off" : ""}`}
-            onClick={() => toggle(g.key)}
-          >
-            <span className="legrow__sw" style={{ background: g.color }} />
-            <span className="legrow__label">{g.label}</span>
-            <span className="legrow__count">{counts[g.key]}</span>
-          </button>
-        ))}
-      </div>
-
-      <MapDetail poi={selected} onClose={() => setSelected(null)} onDelete={store.remove} />
-        </>
+        <MapDetail poi={selected} onClose={() => setSelected(null)} onDelete={store.remove} />
       )}
       </div>
     </div>

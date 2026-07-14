@@ -1,23 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
-
 /**
- * Transparent viewfinder for the mob target-name panel. Positioned once over the
- * creature name (e.g. "L30 Dymlek Provider"); the combat tracker OCRs this spot
- * automatically at the start of each encounter.
+ * Mob Scanner — a chrome-less transparent viewfinder over the creature
+ * name/level/maturity panel; the combat tracker OCRs it at the start of each
+ * encounter. Drag anywhere to move. Shown/hidden from the dock (Mob cluster).
+ * Orange frame distinguishes it from the red rock Scanner.
  */
 export function MobCaptureRegion() {
-  return (
-    <div className="capbox" data-tauri-drag-region>
-      <div className="capbox__bar" data-tauri-drag-region>
-        <span className="capbox__tag">MOB OCR</span>
-        <button
-          className="capbox__hide"
-          onClick={() => invoke("hide_window", { label: "mobcap" })}
-          aria-label="Hide"
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  );
+  return <div className="capbox capbox--mob" data-tauri-drag-region />;
 }

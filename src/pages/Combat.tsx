@@ -18,17 +18,14 @@ function mobTitle(e: Encounter): string {
 }
 
 export function Combat({ store }: { store: ReturnType<typeof useEncounters> }) {
-  const { items, current, enabled, remove, clear, toggle } = store;
-  const [boxOpen, setBoxOpen] = useState(false);
+  const { items, current, enabled, remove, clear } = store;
   const [reading, setReading] = useState(false);
   const [read, setRead] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const toggleBox = useCallback(async () => {
-    try {
-      setBoxOpen(await invoke<boolean>("toggle_mobcap"));
-    } catch {
-      /* ignore */
-    }
+  // Setup only: reveal the mob Scanner to position it. The Mob logger (combat
+  // capture + scanner) is armed from the dock.
+  const calibrate = useCallback(() => {
+    invoke("set_overlay", { label: "mobcap", on: true }).catch(() => {});
   }, []);
 
   const testRead = useCallback(async () => {
@@ -60,19 +57,16 @@ export function Combat({ store }: { store: ReturnType<typeof useEncounters> }) {
   return (
     <section className="rocks">
       <div className="rocks__toolbar">
-        <button
-          className={`combtoggle ${enabled ? "combtoggle--on" : ""}`}
-          onClick={toggle}
-        >
-          <span className="combtoggle__dot" />
-          {enabled ? "Logging ON" : "Logging OFF"}
-        </button>
-        <button className={`toolbtn ${boxOpen ? "toolbtn--active" : ""}`} onClick={toggleBox}>
-          <IconFrame /> Mob Box
+        <button className="toolbtn" onClick={calibrate}>
+          <IconFrame /> Calibrate Scanner
         </button>
         <button className="toolbtn" onClick={testRead} disabled={reading}>
           <IconEye /> {reading ? "Reading…" : "Test Read"}
         </button>
+        <span className={`combstat ${enabled ? "combstat--on" : ""}`}>
+          <span className="combstat__dot" />
+          Logger {enabled ? "armed" : "idle"} · dock
+        </span>
         {read && (
           <span className={`rocks__readout ${read.ok ? "" : "is-err"}`} title={read.text}>
             {read.text}
@@ -86,9 +80,10 @@ export function Combat({ store }: { store: ReturnType<typeof useEncounters> }) {
       </div>
 
       <p className="rocks__help">
-        Position the Mob Box over the creature name panel once. Combat logs itself — the first hit
-        on a new mob OCRs its name and captures your position, then damage, skills and loot track
-        until ~1s after loot drops.
+        Setup: <b>Calibrate Scanner</b> over the creature name panel, then <b>Test Read</b>.
+        Arm the <b>Mob logger</b> from the dock — combat then logs itself: the first hit on a
+        new mob OCRs its name + your position, and damage, skills and loot track until ~1s
+        after loot drops.
       </p>
 
       {current && (

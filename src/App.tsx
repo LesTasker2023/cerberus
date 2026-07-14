@@ -9,7 +9,10 @@ import { Combat } from "./pages/Combat";
 import { MobDb } from "./pages/MobDb";
 import { MapView } from "./pages/MapView";
 import { Settings } from "./pages/Settings";
+import { Login } from "./pages/Login";
+import { useAuth, isAuthed } from "./hooks/useAuth";
 import { useLogWatch } from "./hooks/useLogWatch";
+import { useFeedIntel } from "./hooks/useFeedIntel";
 import { useAsteroids } from "./hooks/useAsteroids";
 import { useEncounters } from "./hooks/useEncounters";
 import { usePois } from "./hooks/usePois";
@@ -19,7 +22,9 @@ import { useUpdater } from "./hooks/useUpdater";
 type Page = "home" | "feed" | "rocks" | "combat" | "bestiary" | "map" | "settings";
 
 export default function App() {
+  const auth = useAuth();
   const watch = useLogWatch();
+  const intel = useFeedIntel();
   const rocks = useAsteroids();
   const encounters = useEncounters();
   const poiStore = usePois();
@@ -67,6 +72,20 @@ export default function App() {
     return () => clearTimeout(t);
   }, []);
 
+  // Clan gate: only active once the Discord app IDs are configured. Until then
+  // the app stays open so it's usable before login is wired up.
+  if (auth.configured === true && !isAuthed(auth.session)) {
+    return (
+      <Login
+        session={auth.session}
+        busy={auth.busy}
+        error={auth.error}
+        onLogin={auth.login}
+        onLogout={auth.logout}
+      />
+    );
+  }
+
   return (
     <div className="app">
       <header className="titlebar" data-tauri-drag-region>
@@ -100,6 +119,17 @@ export default function App() {
           </svg>
         </button>
 
+        {auth.session && (
+          <button className="userchip" onClick={auth.logout} title="Sign out">
+            {auth.session.avatar_url ? (
+              <img className="userchip__av" src={auth.session.avatar_url} alt="" />
+            ) : (
+              <span className="userchip__av userchip__av--none" />
+            )}
+            <span className="userchip__name">{auth.session.display_name}</span>
+          </button>
+        )}
+
         <WindowControls />
       </header>
 
@@ -113,7 +143,7 @@ export default function App() {
             onNavigate={setPage}
           />
         )}
-        {page === "feed" && <Feed watch={watch} />}
+        {page === "feed" && <Feed watch={watch} intel={intel} />}
         {page === "rocks" && <Asteroids store={rocks} />}
         {page === "combat" && <Combat store={encounters} />}
         {page === "bestiary" && <MobDb store={encounters} />}

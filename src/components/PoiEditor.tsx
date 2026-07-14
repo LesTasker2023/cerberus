@@ -35,6 +35,12 @@ export function PoiEditor({
   const [f, setF] = useState({ ...EMPTY });
   const [paste, setPaste] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+
+  const shown = search.trim()
+    ? items.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
+    : items;
 
   const set = (patch: Partial<typeof f>) => setF((prev) => ({ ...prev, ...patch }));
 
@@ -60,6 +66,7 @@ export function PoiEditor({
     const p = items.find((i) => i.id === id);
     if (!p) return;
     setEditId(id);
+    setFormOpen(true);
     setF({
       name: p.name,
       category: p.category,
@@ -96,13 +103,66 @@ export function PoiEditor({
     }
   };
 
+  const showForm = formOpen || editId != null;
+
   return (
     <div className="poied">
       <div className="poied__head">
-        <span className="poied__title">POI Editor</span>
+        <span className="poied__title">POIs</span>
         <span className="poied__count">{items.length}</span>
       </div>
 
+      <input
+        className="input poied__search"
+        value={search}
+        placeholder="Search POIs…"
+        spellCheck={false}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+
+      <div className="poied__list">
+        {shown.length === 0 ? (
+          <p className="poied__empty">{items.length === 0 ? "No POIs yet." : "No matches."}</p>
+        ) : (
+          shown.map((p) => (
+            <div key={p.id} className={`poirow ${editId === p.id ? "poirow--on" : ""}`}>
+              <button
+                className="poirow__main"
+                onClick={() => {
+                  edit(p.id);
+                  onFocus?.(p);
+                }}
+                title="Focus on map + edit"
+              >
+                <span className="poirow__name">{p.name}</span>
+                <span className="poirow__cat">
+                  {p.category.replace("asteroid-", "").replace("-", " ")}
+                </span>
+              </button>
+              <button
+                className="icobtn icobtn--del"
+                onClick={() => {
+                  remove(p.id);
+                  if (editId === p.id) reset();
+                }}
+                aria-label="Delete"
+                title="Delete"
+              >
+                <IconTrash />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
+      <button
+        className={`poied__addtoggle ${showForm ? "poied__addtoggle--on" : ""}`}
+        onClick={() => (showForm ? reset() : setFormOpen(true))}
+      >
+        {showForm ? "− Close editor" : "＋ Add POI"}
+      </button>
+
+      {showForm && (
       <div className="poied__form">
         <div className="poied__row">
           <input
@@ -164,35 +224,7 @@ export function PoiEditor({
           </button>
         </div>
       </div>
-
-      <div className="poied__list">
-        {items.map((p) => (
-          <div key={p.id} className={`poirow ${editId === p.id ? "poirow--on" : ""}`}>
-            <button
-              className="poirow__main"
-              onClick={() => {
-                edit(p.id);
-                onFocus?.(p);
-              }}
-              title="Focus on map + edit"
-            >
-              <span className="poirow__name">{p.name}</span>
-              <span className="poirow__cat">{p.category.replace("asteroid-", "").replace("-", " ")}</span>
-            </button>
-            <button
-              className="icobtn icobtn--del"
-              onClick={() => {
-                remove(p.id);
-                if (editId === p.id) reset();
-              }}
-              aria-label="Delete"
-              title="Delete"
-            >
-              <IconTrash />
-            </button>
-          </div>
-        ))}
-      </div>
+      )}
     </div>
   );
 }

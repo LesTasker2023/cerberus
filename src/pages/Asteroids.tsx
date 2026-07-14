@@ -1,15 +1,7 @@
 import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { useAsteroids } from "../hooks/useAsteroids";
-import {
-  IconCheck,
-  IconCopy,
-  IconEye,
-  IconFrame,
-  IconPopout,
-  IconRadar,
-  IconTrash,
-} from "../components/icons";
+import { IconCheck, IconCopy, IconEye, IconFrame, IconTrash } from "../components/icons";
 
 const CATEGORIES = [
   { key: "asteroid-m", label: "M-Type", short: "M" },
@@ -39,27 +31,14 @@ function clock(iso: string): string {
 export function Asteroids({ store }: { store: ReturnType<typeof useAsteroids> }) {
   const { items, remove } = store;
 
-  const [boxOpen, setBoxOpen] = useState(false);
-  const [loggerOpen, setLoggerOpen] = useState(false);
   const [reading, setReading] = useState(false);
   const [read, setRead] = useState<{ ok: boolean; text: string } | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [radarOpen, setRadarOpen] = useState(false);
 
-  const toggleBox = useCallback(async () => {
-    try {
-      setBoxOpen(await invoke<boolean>("toggle_capregion"));
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const toggleLogger = useCallback(async () => {
-    try {
-      setLoggerOpen(await invoke<boolean>("toggle_panel"));
-    } catch {
-      /* ignore */
-    }
+  // Setup only: reveal the rock Scanner so it can be positioned. In-game the
+  // Rock logger (scanner + pill) is armed from the dock.
+  const calibrate = useCallback(() => {
+    invoke("set_overlay", { label: "capregion", on: true }).catch(() => {});
   }, []);
 
   const testRead = useCallback(async () => {
@@ -87,13 +66,10 @@ export function Asteroids({ store }: { store: ReturnType<typeof useAsteroids> })
 
   return (
     <section className="rocks">
-      {/* ── Control toolbar ── */}
+      {/* ── Setup toolbar (calibration only — live control is on the dock) ── */}
       <div className="rocks__toolbar">
-        <button
-          className={`toolbtn ${boxOpen ? "toolbtn--active" : ""}`}
-          onClick={toggleBox}
-        >
-          <IconFrame /> Capture Box
+        <button className="toolbtn" onClick={calibrate}>
+          <IconFrame /> Calibrate Scanner
         </button>
         <button className="toolbtn" onClick={testRead} disabled={reading}>
           <IconEye /> {reading ? "Reading…" : "Test Read"}
@@ -104,31 +80,13 @@ export function Asteroids({ store }: { store: ReturnType<typeof useAsteroids> })
             {read.text}
           </span>
         )}
-
-        <button
-          className={`toolbtn toolbtn--right ${loggerOpen ? "toolbtn--active" : ""}`}
-          onClick={toggleLogger}
-        >
-          <IconPopout /> Logger
-        </button>
-        <button
-          className={`toolbtn ${radarOpen ? "toolbtn--active" : ""}`}
-          onClick={async () => {
-            try {
-              setRadarOpen(await invoke<boolean>("toggle_radar"));
-            } catch {
-              /* ignore */
-            }
-          }}
-        >
-          <IconRadar /> Radar
-        </button>
       </div>
 
       <p className="rocks__help">
-        Position the Capture Box over the target tooltip once — it keeps reading that spot
-        even when hidden. In-game, hover a rock and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+
-        <kbd>C</kbd> (or the Logger pill) to log at your position.
+        Setup: <b>Calibrate Scanner</b> shows the viewfinder — drag it over the asteroid
+        scan panel, then <b>Test Read</b> to confirm. In-game, arm the <b>Rock logger</b>
+        from the dock, then hover a rock and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+
+        <kbd>C</kbd> (or the log pill).
       </p>
 
       {/* ── Log list ── */}

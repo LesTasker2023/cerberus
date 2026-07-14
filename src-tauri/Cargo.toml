@@ -1,6 +1,6 @@
 [package]
 name = "cerberus"
-version = "0.2.2"
+version = "0.2.3"
 description = "Cerberus — Entropia Universe space PVP clan tool"
 authors = ["les-t"]
 edition = "2021"
@@ -25,6 +25,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
+# Discord OAuth (implicit grant): loopback redirect server + API client.
+tiny_http = "0.12"
+ureq = { version = "2", features = ["json"] }
+getrandom = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "wingdi", "combaseapi", "objbase"] }

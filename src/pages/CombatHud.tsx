@@ -35,7 +35,10 @@ export function CombatHud() {
       </div>
       <button
         className="chud__close"
-        onClick={() => invoke("toggle_combat").catch(() => {})}
+        onClick={() => {
+          invoke("set_combat", { on: false }).catch(() => {});
+          invoke("set_overlay", { label: "mobcap", on: false }).catch(() => {});
+        }}
         title="Stop logging"
         aria-label="Stop logging"
       >

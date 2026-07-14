@@ -1,10 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useAsteroids } from "../hooks/useAsteroids";
 import { usePois } from "../hooks/usePois";
 import { usePlayerPosition } from "../hooks/usePlayerPosition";
 import { MapView } from "./MapView";
 
-/** Always-on-top overlay: the real 3D map, in compact mode centred on you. */
+/** Always-on-top radar overlay: the 3D map in compact mode, centred on you.
+ *  Chrome-less — a slim grip to drag, everything else driven from the dock. */
 export function BattleRadar() {
   const store = useAsteroids();
   const poiStore = usePois();
@@ -12,15 +12,8 @@ export function BattleRadar() {
 
   return (
     <div className="radar">
-      <div className="radar__bar" data-tauri-drag-region>
-        <span className="radar__title">MAP</span>
-        <button
-          className="radar__hide"
-          onClick={() => invoke("hide_window", { label: "radar" })}
-          aria-label="Hide"
-        >
-          ✕
-        </button>
+      <div className="radar__grip" data-tauri-drag-region title="Drag">
+        ⠿
       </div>
       <MapView store={store} poiStore={poiStore} playerPos={playerPos} compact />
     </div>

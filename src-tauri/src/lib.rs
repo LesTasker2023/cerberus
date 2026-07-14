@@ -3,8 +3,10 @@
 //! logging, maps, clan sync) lands in later increments.
 
 mod asteroids;
+mod auth;
 mod combat;
 mod input;
+mod nexus;
 mod ocr;
 mod poi;
 mod watcher;
@@ -54,6 +56,8 @@ struct AppState {
     combat: combat::CombatState,
     /// Finished mob encounters (positions, HP, loot, skills).
     encounters: combat::EncounterStore,
+    /// Discord login + clan-membership gate.
+    auth: auth::AuthState,
 }
 
 /// Persisted position + size of the OCR capture box.
@@ -307,6 +311,39 @@ fn capture_position(state: State<'_, AppState>) -> Result<Coords, String> {
     capture_coords(&state)
 }
 
+/* ── Discord login ── */
+
+/// Open the Discord OAuth flow, resolve clan membership, and store the session.
+/// Blocks (on its own thread) until the browser round-trip finishes or times out.
+#[tauri::command]
+fn discord_login(app: AppHandle) -> Result<auth::Session, String> {
+    auth::login(&app)
+}
+
+/// Clear the stored session.
+#[tauri::command]
+fn discord_logout(state: State<'_, AppState>) {
+    state.auth.set(None);
+}
+
+/// Current session (token stripped), or null if signed out / expired.
+#[tauri::command]
+fn auth_status(state: State<'_, AppState>) -> Option<auth::Session> {
+    state.auth.get().filter(|s| !s.expired()).map(|s| s.public())
+}
+
+/// Whether the clan gate is active (Discord app IDs are configured).
+#[tauri::command]
+fn auth_configured() -> bool {
+    auth::is_configured()
+}
+
+/// Look up an item's live TT value + market markup from Entropia Nexus.
+#[tauri::command]
+fn nexus_item(name: String) -> nexus::NexusItem {
+    nexus::lookup(&name)
+}
+
 /// Short type code for auto-naming an unlabelled rock.
 fn short_code(category: &str) -> &'static str {
     match category {
@@ -464,6 +501,7 @@ fn capture_and_log(
 struct OverlayStates {
     panel: bool,
     capregion: bool,
+    mobcap: bool,
     radar: bool,
     dock: bool,
 }
@@ -477,6 +515,7 @@ fn overlay_states_of(app: &AppHandle) -> OverlayStates {
     OverlayStates {
         panel: vis("panel"),
         capregion: vis("capregion"),
+        mobcap: vis("mobcap"),
         radar: vis("radar"),
         dock: vis("dock"),
     }
@@ -484,6 +523,21 @@ fn overlay_states_of(app: &AppHandle) -> OverlayStates {
 
 fn emit_overlay_states(app: &AppHandle) {
     let _ = app.emit("overlays:changed", overlay_states_of(app));
+}
+
+/// Show or hide a window by label deterministically — backs the compound dock
+/// toggles (a logger cluster sets several windows to the same target state).
+#[tauri::command]
+fn set_overlay(app: AppHandle, label: String, on: bool) -> Result<bool, String> {
+    if let Some(w) = app.get_webview_window(&label) {
+        if on {
+            w.show().map_err(|e| e.to_string())?;
+        } else {
+            w.hide().map_err(|e| e.to_string())?;
+        }
+    }
+    emit_overlay_states(&app);
+    Ok(on)
 }
 
 /// Show/hide a window by label. Returns the new visibility.
@@ -584,25 +638,37 @@ fn clear_encounters(app: AppHandle, state: State<'_, AppState>) -> Result<(), St
 }
 
 /// Arm/disarm the combat logger. Shows/hides the engaged HUD and, when turning
-/// off, discards any in-progress encounter. Returns the new state.
-#[tauri::command]
-fn toggle_combat(app: AppHandle, state: State<'_, AppState>) -> bool {
-    let now = !state.combat.enabled.load(Ordering::Relaxed);
-    state.combat.enabled.store(now, Ordering::Relaxed);
-    if !now {
+/// off, discards any in-progress encounter.
+fn set_combat_enabled(app: &AppHandle, state: &AppState, on: bool) {
+    state.combat.enabled.store(on, Ordering::Relaxed);
+    if !on {
         *state.combat.active.lock().expect("combat poisoned") = None;
         let none: Option<combat::Encounter> = None;
         let _ = app.emit("encounter:update", &none);
     }
-    let _ = app.emit("combat:enabled", now);
+    let _ = app.emit("combat:enabled", on);
     if let Some(w) = app.get_webview_window("combathud") {
-        if now {
+        if on {
             let _ = w.show();
         } else {
             let _ = w.hide();
         }
     }
+}
+
+/// Toggle the combat logger. Returns the new state.
+#[tauri::command]
+fn toggle_combat(app: AppHandle, state: State<'_, AppState>) -> bool {
+    let now = !state.combat.enabled.load(Ordering::Relaxed);
+    set_combat_enabled(&app, state.inner(), now);
     now
+}
+
+/// Set the combat logger to an explicit state (for the compound Mob toggle).
+#[tauri::command]
+fn set_combat(app: AppHandle, state: State<'_, AppState>, on: bool) -> bool {
+    set_combat_enabled(&app, state.inner(), on);
+    on
 }
 
 /// Current combat-logger state (for the UI to hydrate on load).
@@ -630,18 +696,15 @@ fn read_window_region(app: &AppHandle, label: &str) -> Result<String, String> {
         .ok_or("Capture box unavailable")?;
     let pos = w.outer_position().map_err(|e| e.to_string())?;
     let size = w.outer_size().map_err(|e| e.to_string())?;
-    let sf = w.scale_factor().map_err(|e| e.to_string())?;
+    // The Scanner is now a chrome-less bordered box — OCR just insets past the
+    // 2px frame so the border itself isn't read.
     let inset = 5i32;
-    // Skip the viewfinder's own title bar (`.capbox__bar`, 18 CSS px) so the OCR
-    // never reads its "MOB OCR" / "OCR CAPTURE" label as part of the panel.
-    let bar = (18.0 * sf).round() as i32;
-    let top = inset + bar;
     let cw = size.width as i32 - inset * 2;
-    let ch = size.height as i32 - top - inset;
+    let ch = size.height as i32 - inset * 2;
     if cw < 4 || ch < 4 {
         return Err("Capture box is too small".into());
     }
-    ocr::read_region(pos.x + inset, pos.y + top, cw, ch)
+    ocr::read_region(pos.x + inset, pos.y + inset, cw, ch)
 }
 
 /// OCR the mob capture box and parse it into (name, level, maturity). Used by
@@ -766,6 +829,7 @@ pub fn run() {
                 capture: Mutex::new(CaptureMeta::default()),
                 combat: combat::CombatState::default(),
                 encounters: combat::EncounterStore::open(dir.join("encounters.json")),
+                auth: auth::AuthState::open(dir.join("session.json")),
             });
 
             // Restore both capture boxes to their last position/size and keep
@@ -900,11 +964,18 @@ pub fn run() {
             set_capture_meta,
             capture_and_log,
             capture_position,
+            discord_login,
+            discord_logout,
+            auth_status,
+            auth_configured,
+            nexus_item,
             toggle_panel,
             toggle_capregion,
             toggle_radar,
             toggle_mobcap,
             toggle_dock,
+            set_overlay,
+            set_combat,
             overlay_states,
             hide_window,
             finish_splash,
