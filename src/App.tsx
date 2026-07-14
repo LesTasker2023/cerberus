@@ -2,29 +2,31 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { WindowControls } from "./components/WindowControls";
+import { Sidebar, type Page } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
 import { Feed } from "./pages/Feed";
 import { Asteroids } from "./pages/Asteroids";
 import { Combat } from "./pages/Combat";
 import { MobDb } from "./pages/MobDb";
 import { MapView } from "./pages/MapView";
+import { Media } from "./pages/Media";
 import { Settings } from "./pages/Settings";
 import { Login } from "./pages/Login";
 import { useAuth, isAuthed } from "./hooks/useAuth";
 import { useLogWatch } from "./hooks/useLogWatch";
 import { useFeedIntel } from "./hooks/useFeedIntel";
+import { useEcIntel } from "./hooks/useEcIntel";
 import { useAsteroids } from "./hooks/useAsteroids";
 import { useEncounters } from "./hooks/useEncounters";
 import { usePois } from "./hooks/usePois";
 import { usePlayerPosition } from "./hooks/usePlayerPosition";
 import { useUpdater } from "./hooks/useUpdater";
 
-type Page = "home" | "feed" | "rocks" | "combat" | "bestiary" | "map" | "settings";
-
 export default function App() {
   const auth = useAuth();
   const watch = useLogWatch();
   const intel = useFeedIntel();
+  const ec = useEcIntel();
   const rocks = useAsteroids();
   const encounters = useEncounters();
   const poiStore = usePois();
@@ -86,79 +88,62 @@ export default function App() {
     );
   }
 
+  const TITLES: Record<Page, string> = {
+    home: "Dashboard",
+    feed: "Intel Feed",
+    rocks: "Rock Logger",
+    combat: "Mob Logger",
+    bestiary: "Bestiary",
+    map: "Sector Map",
+    media: "Media",
+    settings: "Config",
+  };
+
   return (
     <div className="app">
-      <header className="titlebar" data-tauri-drag-region>
-        <button
-          className="brand"
-          onClick={() => setPage("home")}
-          title="Command"
-        >
-          <span className="brand__diamond" />
-          CERBERUS
-        </button>
+      <Sidebar
+        page={page}
+        onNavigate={setPage}
+        watching={watch.status.watching}
+        session={auth.session}
+        onLogout={auth.logout}
+        dockOpen={dockOpen}
+        onToggleDock={() => invoke("toggle_dock").catch(() => {})}
+      />
 
-        <div className="titlebar__drag" data-tauri-drag-region />
+      <div className="main">
+        <header className="topbar" data-tauri-drag-region>
+          <span className="topbar__title">{TITLES[page]}</span>
+          <div className="topbar__drag" data-tauri-drag-region />
+          <div
+            className={`topbar__sys ${watch.status.watching ? "topbar__sys--on" : ""}`}
+          >
+            <span className="topbar__sysdot" />
+            {watch.status.watching ? "ONLINE" : "OFFLINE"}
+          </div>
+          <WindowControls />
+        </header>
 
-        <div
-          className={`titlebar__sys ${watch.status.watching ? "titlebar__sys--on" : ""}`}
-        >
-          <span className="titlebar__sysdot" />
-          {watch.status.watching ? "ONLINE" : "OFFLINE"}
-        </div>
-
-        <button
-          className={`hudtoggle ${dockOpen ? "hudtoggle--on" : ""}`}
-          onClick={() => invoke("toggle_dock").catch(() => {})}
-          title="HUD dock"
-          aria-label="HUD dock"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
-            <path d="M12 2 20.5 7 20.5 17 12 22 3.5 17 3.5 7Z" />
-            <path d="M12 6.5 16.7 9.2 16.7 14.8 12 17.5 7.3 14.8 7.3 9.2Z" opacity="0.5" />
-          </svg>
-        </button>
-
-        {auth.session && (
-          <button className="userchip" onClick={auth.logout} title="Sign out">
-            {auth.session.avatar_url ? (
-              <img className="userchip__av" src={auth.session.avatar_url} alt="" />
-            ) : (
-              <span className="userchip__av userchip__av--none" />
-            )}
-            <span className="userchip__name">{auth.session.display_name}</span>
-          </button>
-        )}
-
-        <WindowControls />
-      </header>
-
-      <main className="content">
-        {page === "home" && (
-          <Dashboard
-            watch={watch}
-            rocks={rocks}
-            encounters={encounters}
-            poiStore={poiStore}
-            onNavigate={setPage}
-          />
-        )}
-        {page === "feed" && <Feed watch={watch} intel={intel} />}
-        {page === "rocks" && <Asteroids store={rocks} />}
-        {page === "combat" && <Combat store={encounters} />}
-        {page === "bestiary" && <MobDb store={encounters} />}
-        {page === "map" && (
-          <MapView
-            store={rocks}
-            poiStore={poiStore}
-            playerPos={playerPos}
-            mobStore={encounters}
-          />
-        )}
-        {page === "settings" && (
-          <Settings watch={watch} onWatchStarted={() => setPage("feed")} />
-        )}
-      </main>
+        <main className="content">
+          {page === "home" && <Dashboard ec={ec} />}
+          {page === "feed" && <Feed watch={watch} intel={intel} />}
+          {page === "rocks" && <Asteroids store={rocks} />}
+          {page === "combat" && <Combat store={encounters} />}
+          {page === "bestiary" && <MobDb store={encounters} />}
+          {page === "map" && (
+            <MapView
+              store={rocks}
+              poiStore={poiStore}
+              playerPos={playerPos}
+              mobStore={encounters}
+            />
+          )}
+          {page === "media" && <Media />}
+          {page === "settings" && (
+            <Settings watch={watch} onWatchStarted={() => setPage("feed")} />
+          )}
+        </main>
+      </div>
     </div>
   );
 }

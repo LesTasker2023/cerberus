@@ -25,7 +25,7 @@ export function Login({
         : null;
 
   return (
-    <div className="app">
+    <div className="app app--stack">
       <header className="titlebar" data-tauri-drag-region>
         <span className="brand brand--static">
           <span className="brand__diamond" />

@@ -67,6 +67,11 @@ export interface MinerHit {
   value: number;
 }
 
+/** Whether a resource / message looks like space mining (asteroid + space ores). */
+export function isSpaceResource(text: string): boolean {
+  return SPACE_RES.test(text);
+}
+
 /** Parse a Globals line into a space-miner hit, or null if it isn't one. */
 export function parseDeposit(line: LogLine): MinerHit | null {
   if (channelBucket(line.channel) !== "global") return null;

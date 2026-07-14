@@ -5,6 +5,7 @@
 mod asteroids;
 mod auth;
 mod combat;
+mod ec;
 mod input;
 mod nexus;
 mod ocr;
@@ -342,6 +343,18 @@ fn auth_configured() -> bool {
 #[tauri::command]
 fn nexus_item(name: String) -> nexus::NexusItem {
     nexus::lookup(&name)
+}
+
+/// Scout a player — pull their EntropiaCentral dossier for the in-app popover.
+#[tauri::command]
+fn ec_avatar(name: String) -> ec::Avatar {
+    ec::avatar(&name)
+}
+
+/// Community media feeds — live Twitch streams, YouTube videos, Steam news.
+#[tauri::command]
+fn ec_media() -> ec::EcMedia {
+    ec::media()
 }
 
 /// Short type code for auto-naming an unlabelled rock.
@@ -832,6 +845,10 @@ pub fn run() {
                 auth: auth::AuthState::open(dir.join("session.json")),
             });
 
+            // Start the always-on EntropiaCentral intel client (universe-wide
+            // globals + trades). Independent of the local chat.log watcher.
+            ec::start(app.handle().clone());
+
             // Restore both capture boxes to their last position/size and keep
             // them persisted as the user drags/resizes.
             for (label, path) in [("capregion", cap_path), ("mobcap", mob_cap_path)] {
@@ -969,6 +986,8 @@ pub fn run() {
             auth_status,
             auth_configured,
             nexus_item,
+            ec_avatar,
+            ec_media,
             toggle_panel,
             toggle_capregion,
             toggle_radar,
