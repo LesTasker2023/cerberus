@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
-import { invoke } from "@tauri-apps/api/core";
 import type { useAsteroids } from "../hooks/useAsteroids";
 import type { useEncounters } from "../hooks/useEncounters";
 import type { usePois, Poi } from "../hooks/usePois";
 import type { PlayerPos } from "../hooks/usePlayerPosition";
+import type { ClanLocation } from "../lib/locations";
 import { combinePois } from "../lib/pois";
 import { MapDetail, type MapPoi } from "../components/MapDetail";
 import { PoiEditor } from "../components/PoiEditor";
@@ -25,8 +27,9 @@ const CAT_COLOR: Record<string, number> = {
   "asteroid-scrap": 0x8a8f99,
   "outlaw-zone": 0x84cc16,
   mob: 0xf2683c,
+  player: 0xff4d6d, // logged players / hostiles
 };
-const M_BARE = 0x5b6470;
+const M_BARE = 0x3f78c0; // belt-anchor skeleton — tactical steel-blue, not grey
 
 /** Logged mobs within this many EU units of each other belong to the same spawn
  *  area (single-link). Above it, a separate spawn sphere is drawn — so hunting a
@@ -60,9 +63,12 @@ const isBareM = (p: MapPoi) => /^m$/i.test(p.name.trim());
 
 /** Label only stations, outlaw zones, and the user's logged rocks. The context
  *  asteroid field stays as unlabelled dots to avoid a wall of text. */
-const LABELLED = new Set(["station", "space-station", "warp-gate", "landmark", "outlaw-zone"]);
+const LABELLED = new Set(["station", "space-station", "warp-gate", "landmark", "outlaw-zone", "player"]);
 function labelFor(p: MapPoi): string | null {
   if (LABELLED.has(p.category)) return p.name;
+  // Label named mob zones (context / manually-added), but not the individual
+  // logged-encounter kill dots (their ids start "mob-") which would clutter.
+  if (p.category === "mob") return p.id.startsWith("mob-") ? null : p.name;
   if (!p.logged) return null;
   if (p.category === "asteroid-m") {
     const s = sizeOf(p.name);
@@ -71,29 +77,39 @@ function labelFor(p: MapPoi): string | null {
   return p.name;
 }
 
-/** Toggleable POI groups (order = display order), with legend swatch colour. */
-const LEGEND: { key: string; label: string; color: string }[] = [
+/** The seven map filter groups (order = display order), with swatch colour. */
+const FILTERS: { key: string; label: string; color: string }[] = [
+  { key: "space-station", label: "Space Stations", color: "#5ec8d8" },
   { key: "warp-gate", label: "Warp Gates", color: "#b98cff" },
-  { key: "space-station", label: "Planets", color: "#5ec8d8" },
-  { key: "landmark", label: "Landmarks", color: "#d9a441" },
-  { key: "station", label: "Station", color: "#46b0c4" },
-  { key: "anchor", label: "M Anchors", color: "#5b6470" },
-  { key: "asteroid-m", label: "M-Type", color: "#3f7fff" },
-  { key: "asteroid-nd", label: "ND-Type", color: "#a86fc0" },
-  { key: "asteroid-c", label: "C-Type", color: "#b08a55" },
-  { key: "asteroid-s", label: "S-Type", color: "#6f96ad" },
-  { key: "asteroid-f", label: "F-Type", color: "#5aa06a" },
-  { key: "asteroid-scrap", label: "Scrap", color: "#8a8f99" },
-  { key: "outlaw-zone", label: "Outlaw", color: "#84cc16" },
-  { key: "mob", label: "Mobs", color: "#f2683c" },
-  { key: "logged", label: "Logged", color: "#e6e9f2" },
+  { key: "asteroid", label: "Asteroids", color: "#3f78c0" },
+  { key: "mob", label: "Mob Zones", color: "#f2683c" },
+  { key: "outlaw-zone", label: "Outlaw Zones", color: "#84cc16" },
+  { key: "player", label: "Players", color: "#ff4d6d" },
+  { key: "misc", label: "Misc", color: "#8a8f99" },
 ];
 
-/** Which toggle group a POI belongs to. */
-function groupOf(p: MapPoi): string {
-  if (p.logged) return "logged";
-  if (isBareM(p)) return "anchor";
-  return p.category;
+/* ── In-game 4×3 sector grid (B2–E4), ported from delta's space map. Cells are
+ *  10 000 EU, the grid centred on 73000/68500, cols B–E, rows 2–4. Anchored to
+ *  absolute EU coords, so drawing it through euToThree registers it with POIs. */
+const GRID_CELL_EU = 10000;
+const GRID_ORIGIN_EU = { x: 53000, y: 53500 }; // top-left corner (col B, row 2)
+const GRID_COLS = 4;
+const GRID_ROWS = 3;
+const GRID_COL_LETTERS = ["B", "C", "D", "E"];
+const GRID_ROW_NUMS = [2, 3, 4];
+/** [col, row] of the PvP grid cells — C2, C3, D3, E2. */
+const GRID_PVP_CELLS: [number, number][] = [[1, 0], [1, 1], [2, 1], [3, 0]];
+
+/** Map a POI to its filter group (one of FILTERS' keys). */
+function filterGroupOf(p: MapPoi): string {
+  const c = p.category;
+  if (c === "space-station" || c === "station") return "space-station";
+  if (c === "warp-gate") return "warp-gate";
+  if (c.startsWith("asteroid")) return "asteroid"; // all asteroid types + M anchors
+  if (c === "mob") return "mob";
+  if (c === "outlaw-zone") return "outlaw-zone";
+  if (c === "player") return "player";
+  return "misc"; // landmarks + anything else
 }
 
 /** Raw coord units per one in-game AU — calibrated from two known waypoints
@@ -141,24 +157,73 @@ const MARKER_SCALE_MIN = 0.15;
 const MARKER_SCALE_MAX = 1;
 const MARKER_STORE_KEY = "cerberus.markerScale";
 
-/** Render text to a high-res canvas texture (crisp when scaled up on screen). */
+/** Render a label to a canvas texture: text on a translucent dark pill with a
+ *  faint coloured border, so it stays legible over bright fields. */
 function drawLabelTexture(text: string, color: string): { tex: THREE.CanvasTexture; aspect: number } {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
-  const font = "bold 72px 'IBM Plex Mono', monospace";
+  const font = "600 60px 'IBM Plex Mono', monospace";
   ctx.font = font;
-  const w = Math.ceil(ctx.measureText(text).width + 56);
+  const padX = 32;
+  const w = Math.ceil(ctx.measureText(text).width + padX * 2);
   const h = 96;
   canvas.width = w;
   canvas.height = h;
   ctx.font = font;
+
+  // Rounded-rect pill.
+  const r = 20;
+  const bx = 5, by = 20, bw = w - 10, bh = h - 40;
+  ctx.beginPath();
+  ctx.moveTo(bx + r, by);
+  ctx.arcTo(bx + bw, by, bx + bw, by + bh, r);
+  ctx.arcTo(bx + bw, by + bh, bx, by + bh, r);
+  ctx.arcTo(bx, by + bh, bx, by, r);
+  ctx.arcTo(bx, by, bx + bw, by, r);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(7, 9, 13, 0.6)";
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = color + "66"; // 6-digit hex + alpha
+  ctx.stroke();
+
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = color;
-  ctx.fillText(text, w / 2, h / 2);
+  ctx.fillText(text, w / 2, h / 2 + 1);
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearFilter;
   return { tex, aspect: w / h };
+}
+
+/** Additive rim-glow (fresnel) shader — the holo look for atmospheres, zone
+ *  bubbles, and spawn shells. Brightens toward the silhouette edge. */
+function fresnelMaterial(color: number, power = 2.4, intensity = 1.2): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uPower: { value: power },
+      uIntensity: { value: intensity },
+    },
+    vertexShader: `
+      varying vec3 vN; varying vec3 vView;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vN = normalize(normalMatrix * normal);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor; uniform float uPower; uniform float uIntensity;
+      varying vec3 vN; varying vec3 vView;
+      void main() {
+        float rim = pow(1.0 - max(dot(vN, vView), 0.0), uPower);
+        gl_FragColor = vec4(uColor * rim * uIntensity, rim);
+      }`,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
 }
 
 function makeLabel(text: string, color: string): THREE.Sprite {
@@ -186,6 +251,7 @@ export function MapView({
   poiStore,
   playerPos,
   mobStore,
+  presence,
   compact = false,
 }: {
   store: ReturnType<typeof useAsteroids>;
@@ -193,19 +259,36 @@ export function MapView({
   playerPos: PlayerPos | null;
   /** Logged mob encounters — plotted as spawn points + wrapped in a sphere. */
   mobStore?: ReturnType<typeof useEncounters>;
+  /** Live clan teammates (broadcasting), plotted as blue markers. */
+  presence?: ClanLocation[];
   /** Radar mode: chrome hidden, camera follows the player. */
   compact?: boolean;
 }) {
-  // Merge static HM context + editable POIs + logged rocks + mob spawns.
-  const pois = useMemo<MapPoi[]>(
-    () => combinePois(store.items, poiStore.items, mobStore?.items ?? []),
-    [store.items, poiStore.items, mobStore?.items],
-  );
+  // Merge static HM context + editable POIs + logged rocks + mob spawns, then
+  // thin the belt: C/F/S asteroids inside the PVP sphere are dropped (they're
+  // noise inside the zone) while ND and anything outside the sphere is kept.
+  const pois = useMemo<MapPoi[]>(() => {
+    const all = combinePois(store.items, poiStore.items, mobStore?.items ?? []);
+    const anchors = all.filter(isBareM);
+    if (anchors.length < 2) return all;
+    const cx = anchors.reduce((s, p) => s + p.euX, 0) / anchors.length;
+    const cy = anchors.reduce((s, p) => s + p.euY, 0) / anchors.length;
+    const cz = anchors.reduce((s, p) => s + p.euZ, 0) / anchors.length;
+    const r = Math.max(...anchors.map((p) => Math.hypot(p.euX - cx, p.euY - cy, p.euZ - cz)));
+    const HIDE = new Set(["asteroid-c", "asteroid-f", "asteroid-s"]);
+    return all.filter((p) => {
+      if (!HIDE.has(p.category)) return true;
+      return Math.hypot(p.euX - cx, p.euY - cy, p.euZ - cz) > r; // keep only if outside the sphere
+    });
+  }, [store.items, poiStore.items, mobStore?.items]);
 
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const p of pois) c[groupOf(p)] = (c[groupOf(p)] ?? 0) + 1;
+    for (const p of pois) {
+      const g = filterGroupOf(p);
+      c[g] = (c[g] ?? 0) + 1;
+    }
     return c;
   }, [pois]);
   const toggle = (k: string) =>
@@ -219,14 +302,9 @@ export function MapView({
   const [expanded, setExpanded] = useState(false);
   const [wpChip, setWpChip] = useState<string | null>(null);
   const [radarFilters, setRadarFilters] = useState(false);
-  // Click-to-measure: the player position captured on the last POI click, the
-  // straight-line distance to that POI, and a bump to re-fire on re-clicks.
-  const [measurePos, setMeasurePos] = useState<{ x: number; y: number; z: number } | null>(null);
-  const [measureTick, setMeasureTick] = useState(0);
-  // Minimap auto-ping: fire the `<` position key on an interval; `pingPos` holds
-  // the latest fix so the marker + coords stay fresh even without the watcher.
-  const [pinging, setPinging] = useState(false);
-  const [pingPos, setPingPos] = useState<{ x: number; y: number; z: number } | null>(null);
+  // Full map: the fat left panel is retired for a floating toolbar whose buttons
+  // open focused modals.
+  const [modal, setModal] = useState<null | "settings" | "pois">(null);
   const [coordsCopied, setCoordsCopied] = useState(false);
   // Per-machine label size (persisted). A ref feeds the render loop so the
   // slider updates live without rebuilding the scene.
@@ -243,7 +321,13 @@ export function MapView({
   const markerScaleRef = useRef(markerScale);
   markerScaleRef.current = markerScale;
   const mountRef = useRef<HTMLDivElement>(null);
+  // Last plotted player position (three-space), for the heading arrow.
+  const lastPlayerRef = useRef<THREE.Vector3 | null>(null);
+  // Live clan teammate markers, keyed by pilot id, reconciled against `presence`.
+  const clanRef = useRef<Map<string, THREE.Group>>(new Map());
   const sceneRef = useRef<{
+    scene: THREE.Scene;
+    labels: THREE.Sprite[];
     meshes: Map<string, THREE.Object3D[]>;
     pickable: THREE.Mesh[];
     player: THREE.Group;
@@ -276,6 +360,8 @@ export function MapView({
     const scale = 8 / Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1000);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // Direct rendering (no composer) keeps MSAA, so edges stay smooth; allow up
+    // to 2× on high-DPI for crispness — cheap now that bloom is gone.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.setClearColor(0x06070b, 1);
@@ -313,31 +399,102 @@ export function MapView({
     const mobPts: { eu: THREE.Vector3; three: THREE.Vector3 }[] = [];
     // Labels kept at a constant on-screen size so far POIs stay readable.
     const labels: THREE.Sprite[] = [];
+    // Objects that idly rotate (gates spin in-plane, stations tumble).
+    const spinners: { o: THREE.Object3D; ax: "y" | "z"; sp: number }[] = [];
+
+    // 4×3 sector reference grid on the belt's ecliptic plane. Lines + PvP-cell
+    // fills + B2…E4 cell labels, all placed by absolute EU so they line up with
+    // the POIs (crossing a cell seam in-game = entering PvP).
+    {
+      const floorZ = center.z;
+      const gp = (ex: number, ey: number) => euToThree(ex, ey, floorZ, center, scale);
+      const spanY = GRID_ROWS * GRID_CELL_EU;
+      const spanX = GRID_COLS * GRID_CELL_EU;
+
+      // Interior division lines only — no outer perimeter (crossing a seam = PvP).
+      const linePts: THREE.Vector3[] = [];
+      for (let c = 1; c < GRID_COLS; c++) {
+        const ex = GRID_ORIGIN_EU.x + c * GRID_CELL_EU;
+        linePts.push(gp(ex, GRID_ORIGIN_EU.y), gp(ex, GRID_ORIGIN_EU.y + spanY));
+      }
+      for (let r = 1; r < GRID_ROWS; r++) {
+        const ey = GRID_ORIGIN_EU.y + r * GRID_CELL_EU;
+        linePts.push(gp(GRID_ORIGIN_EU.x, ey), gp(GRID_ORIGIN_EU.x + spanX, ey));
+      }
+      const gridLines = new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints(linePts),
+        new THREE.LineBasicMaterial({ color: 0x2b3a55, transparent: true, opacity: 0.45, depthWrite: false }),
+      );
+      gridLines.matrixAutoUpdate = false;
+      scene.add(gridLines);
+
+      // Cell labels (B2…E4); PvP cells tinted red.
+      for (let c = 0; c < GRID_COLS; c++) {
+        for (let r = 0; r < GRID_ROWS; r++) {
+          const ex0 = GRID_ORIGIN_EU.x + c * GRID_CELL_EU;
+          const ey0 = GRID_ORIGIN_EU.y + r * GRID_CELL_EU;
+          const pvp = GRID_PVP_CELLS.some(([pc, pr]) => pc === c && pr === r);
+          const lbl = makeLabel(GRID_COL_LETTERS[c] + GRID_ROW_NUMS[r], pvp ? "#ff5566" : "#4a6a90");
+          lbl.position.copy(gp(ex0 + GRID_CELL_EU / 2, ey0 + GRID_CELL_EU / 2));
+          lbl.userData.isLabel = true;
+          scene.add(lbl);
+          labels.push(lbl);
+        }
+      }
+    }
+
 
     for (const p of pois) {
       const pos = euToThree(p.euX, p.euY, p.euZ, center, scale);
       const bare = isBareM(p);
-      const station = p.category === "station";
-      const spacest = p.category === "space-station";
+      // "station" folds into space-station (only category kept).
+      const spacest = p.category === "space-station" || p.category === "station";
       const gate = p.category === "warp-gate";
       const zone = p.category === "outlaw-zone";
       const color = bare ? M_BARE : CAT_COLOR[p.category] ?? 0x888888;
-      // Uniform base radius; the marker slider scales every marker together.
       const radius = MARKER_BASE;
-      const bright = zone || gate || spacest || p.logged;
 
-      const geo = zone
-        ? new THREE.OctahedronGeometry(radius)
-        : gate
-          ? new THREE.TorusGeometry(radius, radius * 0.4, 8, 24) // warp gates read as rings
-          : new THREE.SphereGeometry(radius, 16, 16);
-      const mesh = new THREE.Mesh(
-        geo,
-        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: bright ? 0.8 : bare ? 0.3 : 0.45, roughness: 0.4, metalness: 0.6 }),
-      );
+      let mesh: THREE.Mesh;
+      if (gate) {
+        // Warp gate — glowing neon ring, spinning in-plane. 3× the belt markers.
+        mesh = new THREE.Mesh(
+          new THREE.TorusGeometry(radius * 3.45, radius * 0.78, 12, 40),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        spinners.push({ o: mesh, ax: "z", sp: 0.8 });
+      } else if (spacest) {
+        // Space station — dim core wrapped in a fresnel halo. 3× the belt markers.
+        mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(radius * 3.15, 24, 24),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(0.32) }),
+        );
+        mesh.add(new THREE.Mesh(new THREE.SphereGeometry(radius * 4.65, 28, 28), fresnelMaterial(color, 2.2, 1.5)));
+      } else if (zone) {
+        // Outlaw-zone marker — hazard octahedron, additive glow.
+        mesh = new THREE.Mesh(
+          new THREE.OctahedronGeometry(radius * 1.15),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        spinners.push({ o: mesh, ax: "y", sp: 0.6 });
+      } else if (p.category === "player") {
+        // Logged player / hostile — rose diamond, stands out from the rock dots.
+        mesh = new THREE.Mesh(new THREE.OctahedronGeometry(radius * 1.1), new THREE.MeshBasicMaterial({ color }));
+      } else {
+        // Asteroid / anchor — glowing point; context rocks dimmed so bloom and
+        // the eye favour the key POIs.
+        const c = new THREE.Color(color);
+        if (!p.logged) c.multiplyScalar(bare ? 0.8 : 0.92);
+        mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 8, 8), new THREE.MeshBasicMaterial({ color: c }));
+      }
       mesh.position.copy(pos);
       mesh.scale.setScalar(markerScaleRef.current);
       mesh.userData.poiId = p.id;
+      // Static markers (everything but the spinning gates/zones) skip the
+      // per-frame matrix recompute — a big CPU win across the whole belt.
+      if (!(gate || zone)) {
+        mesh.updateMatrix();
+        mesh.matrixAutoUpdate = false;
+      }
       scene.add(mesh);
       pickable.push(mesh);
       const objs: THREE.Object3D[] = [mesh];
@@ -346,8 +503,9 @@ export function MapView({
       if (label) {
         const spr = makeLabel(label, "#" + new THREE.Color(color).getHexString());
         spr.position.copy(pos);
-        spr.position.y += station ? 0.28 : 0.16;
+        spr.position.y += spacest ? 0.3 : 0.18;
         spr.userData.poiId = p.id;
+        spr.userData.isLabel = true;
         scene.add(spr);
         objs.push(spr);
         labels.push(spr);
@@ -363,10 +521,7 @@ export function MapView({
     if (pvpZonePos.length) {
       const c = pvpZonePos.reduce((a, v) => a.add(v), new THREE.Vector3()).multiplyScalar(1 / pvpZonePos.length);
       const r = Math.max(...pvpZonePos.map((v) => v.distanceTo(c))) + 0.1;
-      const zoneMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(r, 24, 24),
-        new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false }),
-      );
+      const zoneMesh = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 32), fresnelMaterial(0xef4444, 3.0, 0.9));
       zoneMesh.position.copy(c);
       scene.add(zoneMesh);
     }
@@ -422,35 +577,26 @@ export function MapView({
         const centre = a.clone().add(b).multiplyScalar(0.5);
         const radius = Math.max(a.distanceTo(b) / 2, 0.06);
         const spawn = new THREE.Mesh(
-          new THREE.SphereGeometry(radius, 24, 24),
-          new THREE.MeshBasicMaterial({
-            color: mobColor,
-            transparent: true,
-            opacity: 0.09,
-            side: THREE.DoubleSide,
-            depthWrite: false,
-          }),
+          new THREE.SphereGeometry(radius, 32, 32),
+          fresnelMaterial(mobColor, 2.8, 1.0),
         );
         spawn.position.copy(centre);
         scene.add(spawn);
       }
     }
 
-    // Player "YOU" marker — gold, pulsing; positioned by the effect below.
+    // Player marker — a gold arrow that yaws to the heading of travel. The whole
+    // group is rotated about Y by the position effect; the arrowhead points +Z.
     const playerGroup = new THREE.Group();
     const pColor = 0xffd54a;
-    const pCore = new THREE.Mesh(
-      new THREE.SphereGeometry(0.042, 16, 16),
-      new THREE.MeshStandardMaterial({ color: pColor, emissive: pColor, emissiveIntensity: 1 }),
-    );
-    const pRing = new THREE.Mesh(
-      new THREE.RingGeometry(0.075, 0.092, 32),
-      new THREE.MeshBasicMaterial({ color: pColor, transparent: true, opacity: 0.6, side: THREE.DoubleSide }),
-    );
+    const arrowGeo = new THREE.ConeGeometry(0.055, 0.15, 4);
+    arrowGeo.rotateX(Math.PI / 2); // apex → +Z (the heading direction)
+    const arrow = new THREE.Mesh(arrowGeo, new THREE.MeshBasicMaterial({ color: pColor }));
     const pLabel = makeLabel("YOU", "#ffd54a");
-    pLabel.position.y = 0.13;
+    pLabel.position.y = 0.15;
+    pLabel.userData.isLabel = true;
     labels.push(pLabel);
-    playerGroup.add(pCore, pRing, pLabel);
+    playerGroup.add(arrow, pLabel);
     playerGroup.visible = false;
     scene.add(playerGroup);
 
@@ -468,6 +614,7 @@ export function MapView({
     const measureLabel = makeLabel(" ", "#ffd54a");
     measureLabel.visible = false;
     measureLabel.renderOrder = 1000;
+    measureLabel.userData.pinned = true;
     scene.add(measureLabel);
     labels.push(measureLabel);
 
@@ -505,7 +652,6 @@ export function MapView({
         if (mp) {
           focusTo(mp);
           setSelected(mp);
-          setMeasureTick((n) => n + 1);
         }
       } else setSelected(null);
     };
@@ -514,25 +660,32 @@ export function MapView({
 
     let raf = 0;
     const start = performance.now();
+    let prev = start;
     const tmpV = new THREE.Vector3();
     const loop = () => {
       raf = requestAnimationFrame(loop);
+      const now = performance.now();
+      const dt = Math.min((now - prev) / 1000, 0.05);
+      prev = now;
       controls.update();
+      for (const sp of spinners) sp.o.rotation[sp.ax] += sp.sp * dt;
       if (playerGroup.visible) {
-        const t = (performance.now() - start) / 1000;
-        pRing.lookAt(camera.position);
-        (pRing.material as THREE.MeshBasicMaterial).opacity = 0.35 + Math.sin(t * 3) * 0.25;
-        pCore.scale.setScalar(1 + Math.sin(t * 3) * 0.12);
+        const t = (now - start) / 1000;
+        arrow.scale.setScalar(1 + Math.sin(t * 3) * 0.1);
       }
-      // Hold labels at a constant on-screen size at every zoom level — scaling
-      // world-height by distance cancels perspective, so they never shrink out.
+
+      // Labels: hold a constant on-screen size at every zoom (distance × factor
+      // cancels perspective). No overlap culling — labels stay put (no flicker).
       for (const lb of labels) {
+        if (lb.parent === playerGroup && !playerGroup.visible) continue;
+        if (!lb.userData.pinned) lb.visible = !lb.userData.filteredHidden;
         if (!lb.visible) continue;
         lb.getWorldPosition(tmpV);
         const s = Math.max(camera.position.distanceTo(tmpV) * labelSizeRef.current, 0.01);
         const a = (lb.userData.aspect as number) ?? 3;
         lb.scale.set(a * s, s, 1);
       }
+
       renderer.render(scene, camera);
     };
     loop();
@@ -544,7 +697,13 @@ export function MapView({
     };
     window.addEventListener("resize", onResize);
 
+    // Fresh scene → drop any teammate markers from the previous one; the
+    // presence effect re-adds them against this scene.
+    clanRef.current.clear();
+
     sceneRef.current = {
+      scene,
+      labels,
       meshes,
       pickable,
       player: playerGroup,
@@ -572,8 +731,7 @@ export function MapView({
   useEffect(() => {
     const d = sceneRef.current;
     if (!d) return;
-    const eff =
-      measurePos ?? pingPos ?? (playerPos ? { x: playerPos.x, y: playerPos.y, z: playerPos.z } : null);
+    const eff = playerPos ? { x: playerPos.x, y: playerPos.y, z: playerPos.z } : null;
     if (!eff) {
       d.player.visible = false;
       d.measureLine.visible = false;
@@ -581,6 +739,14 @@ export function MapView({
       return;
     }
     const tgt = euToThree(eff.x, eff.y, eff.z, d.center, d.scale);
+    // Yaw the arrow to the heading of travel (game horizontal plane = three XZ).
+    const last = lastPlayerRef.current;
+    if (last) {
+      const dx = tgt.x - last.x;
+      const dz = tgt.z - last.z;
+      if (dx * dx + dz * dz > 1e-8) d.player.rotation.y = Math.atan2(dx, dz);
+    }
+    lastPlayerRef.current = tgt.clone();
     d.player.position.copy(tgt);
     d.player.visible = true;
     // Radar: follow the player by panning (translate camera + target by the same
@@ -609,45 +775,70 @@ export function MapView({
       d.measureLine.visible = false;
       d.measureLabel.visible = false;
     }
-  }, [playerPos, measurePos, pingPos, selected, pois, compact]);
+  }, [playerPos, selected, pois, compact]);
 
-  // Auto-ping: while on, fire the `<` position key every 5s and keep the latest
-  // fix. Feeds the marker + coords display; capture also nudges the log watcher.
+  // Live clan teammates — reconcile a blue marker + name label per broadcasting
+  // pilot against `presence`. Markers hook into the scene's label array so they
+  // hold constant on-screen size like every other label.
   useEffect(() => {
-    if (!pinging) return;
-    let cancelled = false;
-    const ping = () =>
-      invoke<{ x: number; y: number; z: number }>("capture_position")
-        .then((c) => {
-          if (!cancelled) setPingPos(c);
-        })
-        .catch(() => {});
-    ping();
-    const id = setInterval(ping, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [pinging]);
+    const d = sceneRef.current;
+    if (!d) return;
+    const CLAN = 0x49b3ff;
+    const seen = new Set<string>();
 
-  // When a POI is clicked, fire the `<` position key and store the captured
-  // player position; the range line + midpoint readout react to it.
-  useEffect(() => {
-    if (!selected) {
-      setMeasurePos(null);
-      return;
+    for (const loc of presence ?? []) {
+      if (!Number.isFinite(loc.x) || !Number.isFinite(loc.y) || !Number.isFinite(loc.z)) continue;
+      seen.add(loc.pilot_id);
+      const pos = euToThree(loc.x, loc.y, loc.z, d.center, d.scale);
+      let group = clanRef.current.get(loc.pilot_id);
+      if (!group) {
+        group = new THREE.Group();
+        const dot = new THREE.Mesh(
+          new THREE.SphereGeometry(0.05, 16, 16),
+          new THREE.MeshBasicMaterial({ color: CLAN }),
+        );
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(0.12, 0.014, 8, 32),
+          new THREE.MeshBasicMaterial({ color: CLAN, transparent: true, opacity: 0.65 }),
+        );
+        ring.rotation.x = Math.PI / 2;
+        const label = makeLabel(loc.pilot ?? "pilot", "#8fd3ff");
+        label.position.y = 0.2;
+        label.userData.name = loc.pilot;
+        group.add(dot, ring, label);
+        group.userData.label = label;
+        d.scene.add(group);
+        d.labels.push(label);
+        clanRef.current.set(loc.pilot_id, group);
+      } else {
+        const label = group.userData.label as THREE.Sprite;
+        if (label.userData.name !== loc.pilot) {
+          setLabelText(label, loc.pilot ?? "pilot", "#8fd3ff");
+          label.userData.name = loc.pilot;
+        }
+      }
+      group.position.copy(pos);
     }
-    let cancelled = false;
-    invoke<{ x: number; y: number; z: number }>("capture_position")
-      .then((c) => {
-        if (!cancelled) setMeasurePos(c);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-    // measureTick forces a re-capture when the same POI is clicked again.
-  }, [selected, measureTick]);
+
+    // Drop teammates no longer broadcasting.
+    for (const [id, group] of clanRef.current) {
+      if (seen.has(id)) continue;
+      d.scene.remove(group);
+      const label = group.userData.label as THREE.Sprite;
+      const i = d.labels.indexOf(label);
+      if (i >= 0) d.labels.splice(i, 1);
+      const lm = label.material as THREE.SpriteMaterial;
+      lm.map?.dispose();
+      lm.dispose();
+      group.children.forEach((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+      clanRef.current.delete(id);
+    }
+  }, [presence, pois]);
 
   // Mini-map (compact) has no detail panel — clicking a POI copies its EU
   // waypoint straight to the clipboard and flashes a confirmation chip.
@@ -669,7 +860,10 @@ export function MapView({
   // Persist marker scale and rescale every marker live as the slider moves.
   useEffect(() => {
     localStorage.setItem(MARKER_STORE_KEY, String(markerScale));
-    sceneRef.current?.pickable.forEach((m) => m.scale.setScalar(markerScale));
+    sceneRef.current?.pickable.forEach((m) => {
+      m.scale.setScalar(markerScale);
+      m.updateMatrix(); // static markers have matrixAutoUpdate off
+    });
   }, [markerScale]);
   useEffect(() => {
     const h = (e: StorageEvent) => {
@@ -686,8 +880,13 @@ export function MapView({
     const data = sceneRef.current;
     if (!data) return;
     for (const p of pois) {
-      const visible = !hidden.has(groupOf(p));
-      data.meshes.get(p.id)?.forEach((o) => (o.visible = visible));
+      const visible = !hidden.has(filterGroupOf(p));
+      data.meshes.get(p.id)?.forEach((o) => {
+        // Labels are owned by the render loop's collision pass — flag them here
+        // rather than forcing visibility, so filtering + culling don't fight.
+        if (o.userData.isLabel) o.userData.filteredHidden = !visible;
+        else o.visible = visible;
+      });
     }
   }, [pois, hidden]);
 
@@ -707,9 +906,8 @@ export function MapView({
     setSelected(pois.find((mp) => mp.id === poi.id) ?? null);
   };
 
-  // Live player coords for the minimap readout (latest measure/ping/watcher fix).
-  const coords =
-    measurePos ?? pingPos ?? (playerPos ? { x: playerPos.x, y: playerPos.y, z: playerPos.z } : null);
+  // Live player coords for the minimap readout (last-known watcher position).
+  const coords = playerPos ? { x: playerPos.x, y: playerPos.y, z: playerPos.z } : null;
   const copyCoords = () => {
     if (!coords) return;
     navigator.clipboard
@@ -766,72 +964,10 @@ export function MapView({
     }
   };
 
-  const legendGroups = LEGEND.filter((g) => counts[g.key]);
+  const filterGroups = FILTERS.filter((g) => counts[g.key]);
 
   return (
     <div className="map">
-      {!compact && (
-        <aside className="mappanel">
-          <div className="mappanel__stats">
-            <span className="mstat">
-              Belt <b>{pois.filter(isBareM).length}</b>
-            </span>
-            <span className="mstat">
-              Logged <b>{loggedCount}</b>
-            </span>
-            <span className="mstat mstat--outlaw">
-              Outlaw <b>{pois.filter((p) => p.category === "outlaw-zone").length}</b>
-            </span>
-          </div>
-
-          <div className="mappanel__sec">
-            <div className="mappanel__lbl">Filters</div>
-            <div className="filterlist">
-              {legendGroups.map((g) => (
-                <button
-                  key={g.key}
-                  className={`legrow ${hidden.has(g.key) ? "legrow--off" : ""}`}
-                  onClick={() => toggle(g.key)}
-                >
-                  <span className="legrow__sw" style={{ background: g.color }} />
-                  <span className="legrow__label">{g.label}</span>
-                  <span className="legrow__count">{counts[g.key]}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mappanel__sec">
-            <div className="mappanel__lbl">
-              Markers <span className="mappanel__val">{Math.round(markerScale * 100)}%</span>
-            </div>
-            <input
-              type="range"
-              className="mapslider"
-              min={Math.round(MARKER_SCALE_MIN * 100)}
-              max={Math.round(MARKER_SCALE_MAX * 100)}
-              value={Math.round(markerScale * 100)}
-              aria-label="Marker size"
-              onChange={(e) => setMarkerScale(Number(e.target.value) / 100)}
-            />
-            <div className="mappanel__lbl mappanel__lbl--sub">
-              Labels <span className="mappanel__val">{Math.round((labelSize / LABEL_SIZE_DEFAULT) * 100)}%</span>
-            </div>
-            <input
-              type="range"
-              className="mapslider"
-              min={Math.round(LABEL_SIZE_MIN * 1000)}
-              max={Math.round(LABEL_SIZE_MAX * 1000)}
-              value={Math.round(labelSize * 1000)}
-              aria-label="Label size"
-              onChange={(e) => setLabelSize(Number(e.target.value) / 1000)}
-            />
-          </div>
-
-          <PoiEditor poiStore={poiStore} onFocus={focusPoi} />
-        </aside>
-      )}
-
       <div className="map__view">
       <div ref={mountRef} className="map__canvas" />
 
@@ -861,7 +997,7 @@ export function MapView({
           </button>
           {radarFilters && (
             <div className="radarfilters">
-              {legendGroups.map((g) => (
+              {filterGroups.map((g) => (
                 <button
                   key={g.key}
                   className={`legrow ${hidden.has(g.key) ? "legrow--off" : ""}`}
@@ -874,18 +1010,6 @@ export function MapView({
               ))}
             </div>
           )}
-          <button
-            className={`radarping ${pinging ? "radarping--on" : ""}`}
-            onClick={() => setPinging((p) => !p)}
-            title={pinging ? "Auto-ping location: ON (every 5s)" : "Auto-ping location (every 5s)"}
-            aria-label="Auto-ping location"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
-              <path d="M7.6 7.6a6.2 6.2 0 0 0 0 8.8M16.4 16.4a6.2 6.2 0 0 0 0-8.8M4.9 4.9a9.9 9.9 0 0 0 0 14.2M19.1 19.1a9.9 9.9 0 0 0 0-14.2" />
-            </svg>
-          </button>
-
           {wpChip && (
             <div className="radarwp" role="status">
               🛰 {wpChip} · WP copied
@@ -919,9 +1043,144 @@ export function MapView({
           </button>
         </>
       ) : (
-        <MapDetail poi={selected} onClose={() => setSelected(null)} onDelete={store.remove} />
+        <>
+          <div className="maptools">
+            <div className="maptools__stats">
+              <span className="mtchip">
+                <b>{pois.filter(isBareM).length}</b> belt
+              </span>
+              <span className="mtchip">
+                <b>{loggedCount}</b> logged
+              </span>
+              <span className="mtchip mtchip--outlaw">
+                <b>{pois.filter((p) => p.category === "outlaw-zone").length}</b> outlaw
+              </span>
+            </div>
+            <button
+              className={`maptool ${modal === "settings" ? "maptool--on" : ""}`}
+              onClick={() => setModal(modal === "settings" ? null : "settings")}
+              title="View settings"
+              aria-label="View settings"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 8h10M18 8h2M4 16h6M14 16h6" />
+                <circle cx="16" cy="8" r="2.2" fill="currentColor" stroke="none" />
+                <circle cx="10" cy="16" r="2.2" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
+            <button
+              className={`maptool ${modal === "pois" ? "maptool--on" : ""}`}
+              onClick={() => setModal(modal === "pois" ? null : "pois")}
+              title="POIs"
+              aria-label="POIs"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 21s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12Z" />
+                <circle cx="12" cy="9" r="2.5" />
+              </svg>
+            </button>
+          </div>
+
+          <MapDetail poi={selected} onClose={() => setSelected(null)} onDelete={store.remove} />
+
+          <div className="mapfilters">
+            <div className="mapfilters__head">
+              <span className="mapfilters__title">Filters</span>
+              <button className="mapfilters__act" onClick={() => setHidden(new Set())}>
+                All
+              </button>
+              <button
+                className="mapfilters__act"
+                onClick={() => setHidden(new Set(FILTERS.map((f) => f.key)))}
+              >
+                None
+              </button>
+            </div>
+            {FILTERS.map((g) => (
+              <button
+                key={g.key}
+                className={`legrow ${hidden.has(g.key) ? "legrow--off" : ""}`}
+                onClick={() => toggle(g.key)}
+              >
+                <span className="legrow__sw" style={{ background: g.color }} />
+                <span className="legrow__label">{g.label}</span>
+                <span className="legrow__count">{counts[g.key] ?? 0}</span>
+              </button>
+            ))}
+          </div>
+
+          {modal === "settings" && (
+            <MapModal title="View" onClose={() => setModal(null)}>
+              <div className="mapset">
+                <div className="mappanel__lbl">
+                  Markers <span className="mappanel__val">{Math.round(markerScale * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  className="mapslider"
+                  min={Math.round(MARKER_SCALE_MIN * 100)}
+                  max={Math.round(MARKER_SCALE_MAX * 100)}
+                  value={Math.round(markerScale * 100)}
+                  aria-label="Marker size"
+                  onChange={(e) => setMarkerScale(Number(e.target.value) / 100)}
+                />
+                <div className="mappanel__lbl mappanel__lbl--sub">
+                  Labels <span className="mappanel__val">{Math.round((labelSize / LABEL_SIZE_DEFAULT) * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  className="mapslider"
+                  min={Math.round(LABEL_SIZE_MIN * 1000)}
+                  max={Math.round(LABEL_SIZE_MAX * 1000)}
+                  value={Math.round(labelSize * 1000)}
+                  aria-label="Label size"
+                  onChange={(e) => setLabelSize(Number(e.target.value) / 1000)}
+                />
+              </div>
+            </MapModal>
+          )}
+
+          {modal === "pois" && (
+            <MapModal title="POIs" onClose={() => setModal(null)} wide>
+              <PoiEditor poiStore={poiStore} onFocus={focusPoi} />
+            </MapModal>
+          )}
+        </>
       )}
       </div>
     </div>
+  );
+}
+
+/** A lightweight modal used by the map's toolbar buttons. */
+function MapModal({
+  title,
+  onClose,
+  wide,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  wide?: boolean;
+  children: ReactNode;
+}) {
+  // Portalled to <body> so no ancestor's transform/overflow/stacking context can
+  // trap or clip it (which is what broke the editor modal before).
+  return createPortal(
+    <div className="mapmodal" onClick={onClose}>
+      <div
+        className={`mapmodal__box ${wide ? "mapmodal__box--wide" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mapmodal__bar">
+          <span className="mapmodal__title">{title}</span>
+          <button className="mapmodal__close" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <div className="mapmodal__body">{children}</div>
+      </div>
+    </div>,
+    document.body,
   );
 }

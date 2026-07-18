@@ -1,1 +1,352 @@
-[{"name":"Calypso Space Station","category":"space-station","eu_x":58265,"eu_y":69229,"eu_z":-804,"pvp_lootable":false,"notes":"The original space station"},{"name":"Setesh Space Station","category":"space-station","eu_x":58381,"eu_y":71438,"eu_z":-173,"pvp_lootable":false,"notes":""},{"name":"Aris Space Station","category":"space-station","eu_x":58956,"eu_y":69073,"eu_z":-512,"pvp_lootable":false,"notes":""},{"name":"Crystal Palace","category":"space-station","eu_x":58810,"eu_y":69254,"eu_z":-200,"pvp_lootable":false,"notes":"Luxury asteroid station in Calypso orbit"},{"name":"Monria Space Station","category":"space-station","eu_x":58054,"eu_y":81246,"eu_z":-56,"pvp_lootable":false,"notes":"Gateway to the Lovecraftian moon"},{"name":"Cyrene Space Station","category":"space-station","eu_x":61344,"eu_y":58544,"eu_z":-77,"pvp_lootable":false,"notes":"Research and exploration hub"},{"name":"Arkadia Space Station","category":"space-station","eu_x":77728,"eu_y":58544,"eu_z":-50,"pvp_lootable":false,"notes":"Main hub for Arkadia"},{"name":"Rocktropia Space Station","category":"space-station","eu_x":69536,"eu_y":80528,"eu_z":-25,"pvp_lootable":false,"notes":"Rock music themed station"},{"name":"Next Island Space Station","category":"space-station","eu_x":88685,"eu_y":69549,"eu_z":143,"pvp_lootable":false,"notes":"Time travel gateway"},{"name":"Toulan Space Station","category":"space-station","eu_x":85276,"eu_y":81077,"eu_z":-428,"pvp_lootable":false,"notes":"Middle Eastern themed gateway"},{"name":"Erebos Space Station","category":"space-station","eu_x":68782,"eu_y":69720,"eu_z":25,"pvp_lootable":false,"notes":"Deep space PVP station"},{"name":"Athena Space Station","category":"space-station","eu_x":78493,"eu_y":69720,"eu_z":25,"pvp_lootable":false,"notes":"Deep space PVP station"},{"name":"Zeus Space Station","category":"space-station","eu_x":68782,"eu_y":63574,"eu_z":25,"pvp_lootable":false,"notes":"Deep space PVP station"},{"name":"Hermes Space Station","category":"space-station","eu_x":87729,"eu_y":61197,"eu_z":25,"pvp_lootable":false,"notes":"Deep space PVP station"},{"name":"F.O.M.A","category":"landmark","eu_x":58787,"eu_y":70150,"eu_z":0,"pvp_lootable":false,"notes":"Fort Argus Moon Asteroid"},{"name":"Arkadia Moon","category":"landmark","eu_x":76592,"eu_y":58324,"eu_z":-50,"pvp_lootable":false,"notes":"Arkadia moon"}]
+[
+  {
+    "name": "Cyrene Warp Gate",
+    "category": "warp-gate",
+    "eu_x": 63814,
+    "eu_y": 60703,
+    "eu_z": -219,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Arkadia Warp Gate",
+    "category": "warp-gate",
+    "eu_x": 76713,
+    "eu_y": 59577,
+    "eu_z": -230,
+    "pvp_lootable": false,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Dymlek",
+    "category": "mob",
+    "eu_x": 83340,
+    "eu_y": 60463,
+    "eu_z": 184,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Hermes",
+    "category": "space-station",
+    "eu_x": 87732,
+    "eu_y": 61201,
+    "eu_z": -500,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Dymlin Space",
+    "category": "landmark",
+    "eu_x": 86786,
+    "eu_y": 59386,
+    "eu_z": 1610,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Rackham's Nest (Cosmic Horror)",
+    "category": "mob",
+    "eu_x": 76842,
+    "eu_y": 79900,
+    "eu_z": 226,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Athena",
+    "category": "space-station",
+    "eu_x": 78522,
+    "eu_y": 69710,
+    "eu_z": -2554,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "New Berand (Cosmic Horror)",
+    "category": "mob",
+    "eu_x": 78669,
+    "eu_y": 68859,
+    "eu_z": -2415,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Howling Mine Warp Gate",
+    "category": "warp-gate",
+    "eu_x": 77309,
+    "eu_y": 76644,
+    "eu_z": -2101,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": "Howling Mine"
+  },
+  {
+    "name": "Aris",
+    "category": "space-station",
+    "eu_x": 58977,
+    "eu_y": 69076,
+    "eu_z": -524,
+    "pvp_lootable": false,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Calypso",
+    "category": "space-station",
+    "eu_x": 58173,
+    "eu_y": 69247,
+    "eu_z": -826,
+    "pvp_lootable": false,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Shank Outcast",
+    "category": "outlaw-zone",
+    "eu_x": 59115,
+    "eu_y": 69678,
+    "eu_z": -741,
+    "pvp_lootable": false,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Skyflail Nesting Grounds",
+    "category": "mob",
+    "eu_x": 60786,
+    "eu_y": 70995,
+    "eu_z": -119,
+    "pvp_lootable": false,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Alex",
+    "category": "player",
+    "eu_x": 77726,
+    "eu_y": 76811,
+    "eu_z": -2982,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Alex",
+    "category": "player",
+    "eu_x": 77687,
+    "eu_y": 76848,
+    "eu_z": -3016,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Alex",
+    "category": "player",
+    "eu_x": 77864,
+    "eu_y": 77196,
+    "eu_z": -3276,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Alex",
+    "category": "player",
+    "eu_x": 77414,
+    "eu_y": 77337,
+    "eu_z": -2922,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Alex",
+    "category": "player",
+    "eu_x": 77744,
+    "eu_y": 77160,
+    "eu_z": -2911,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Alex",
+    "category": "player",
+    "eu_x": 77543,
+    "eu_y": 76818,
+    "eu_z": -2888,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Alex",
+    "category": "player",
+    "eu_x": 77449,
+    "eu_y": 77334,
+    "eu_z": -2911,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Nana",
+    "category": "player",
+    "eu_x": 78108,
+    "eu_y": 76476,
+    "eu_z": 111,
+    "pvp_lootable": false,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Alex",
+    "category": "player",
+    "eu_x": 77403,
+    "eu_y": 77154,
+    "eu_z": -2726,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Howling Mine",
+    "category": "space-station",
+    "eu_x": 78040,
+    "eu_y": 79684,
+    "eu_z": -690,
+    "pvp_lootable": false,
+    "notes": "Howling Mine space station — the primary hub of the sector.",
+    "sector": "Howling Mine"
+  },
+  {
+    "name": "Setesh",
+    "category": "space-station",
+    "eu_x": 58381,
+    "eu_y": 71438,
+    "eu_z": -173,
+    "pvp_lootable": false,
+    "notes": "",
+    "sector": null
+  },
+  {
+    "name": "Crystal Palace",
+    "category": "landmark",
+    "eu_x": 58810,
+    "eu_y": 69254,
+    "eu_z": -200,
+    "pvp_lootable": false,
+    "notes": "Luxury asteroid station in Calypso orbit",
+    "sector": null
+  },
+  {
+    "name": "Monria",
+    "category": "space-station",
+    "eu_x": 58054,
+    "eu_y": 81246,
+    "eu_z": -56,
+    "pvp_lootable": false,
+    "notes": "Gateway to the Lovecraftian moon",
+    "sector": null
+  },
+  {
+    "name": "Arkadia",
+    "category": "space-station",
+    "eu_x": 77728,
+    "eu_y": 58544,
+    "eu_z": -50,
+    "pvp_lootable": false,
+    "notes": "Main hub for Arkadia",
+    "sector": null
+  },
+  {
+    "name": "Rocktropia",
+    "category": "space-station",
+    "eu_x": 70251,
+    "eu_y": 80009,
+    "eu_z": -1143,
+    "pvp_lootable": false,
+    "notes": "Rock music themed station",
+    "sector": null
+  },
+  {
+    "name": "Next Island",
+    "category": "space-station",
+    "eu_x": 88685,
+    "eu_y": 69549,
+    "eu_z": 143,
+    "pvp_lootable": false,
+    "notes": "Time travel gateway",
+    "sector": null
+  },
+  {
+    "name": "Toulan",
+    "category": "space-station",
+    "eu_x": 85276,
+    "eu_y": 81077,
+    "eu_z": -428,
+    "pvp_lootable": false,
+    "notes": "Middle Eastern themed gateway",
+    "sector": null
+  },
+  {
+    "name": "Erebos",
+    "category": "space-station",
+    "eu_x": 68782,
+    "eu_y": 69720,
+    "eu_z": 25,
+    "pvp_lootable": false,
+    "notes": "Deep space PVP station",
+    "sector": null
+  },
+  {
+    "name": "Zeus",
+    "category": "space-station",
+    "eu_x": 68782,
+    "eu_y": 63574,
+    "eu_z": 25,
+    "pvp_lootable": false,
+    "notes": "Deep space PVP station",
+    "sector": null
+  },
+  {
+    "name": "F.O.M.A",
+    "category": "landmark",
+    "eu_x": 58787,
+    "eu_y": 70150,
+    "eu_z": 0,
+    "pvp_lootable": false,
+    "notes": "Fort Argus Moon Asteroid",
+    "sector": null
+  },
+  {
+    "name": "Arkadia Moon",
+    "category": "landmark",
+    "eu_x": 76592,
+    "eu_y": 58324,
+    "eu_z": -50,
+    "pvp_lootable": false,
+    "notes": "Arkadia moon",
+    "sector": null
+  },
+  {
+    "name": "Erobos Warp Gate",
+    "category": "warp-gate",
+    "eu_x": 66049,
+    "eu_y": 69159,
+    "eu_z": -2258,
+    "pvp_lootable": true,
+    "notes": "",
+    "sector": "Erebos"
+  }
+]

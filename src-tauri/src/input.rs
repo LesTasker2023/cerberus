@@ -6,15 +6,11 @@
 #[cfg(windows)]
 use winapi::shared::windef::HWND;
 
-/// Find a visible window whose title contains "Entropia" and focus it.
-/// Returns false if no such window exists (game not running).
+/// Find the first visible window whose title contains "Entropia" (null if none).
 #[cfg(windows)]
-pub fn focus_entropia() -> bool {
+fn find_entropia() -> HWND {
     use winapi::shared::minwindef::{BOOL, FALSE, LPARAM, TRUE};
-    use winapi::um::winuser::{
-        EnumWindows, GetWindowTextW, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow,
-        SW_RESTORE,
-    };
+    use winapi::um::winuser::{EnumWindows, GetWindowTextW, IsWindowVisible};
 
     unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
         if IsWindowVisible(hwnd) == 0 {
@@ -35,15 +31,35 @@ pub fn focus_entropia() -> bool {
     unsafe {
         let mut found: HWND = std::ptr::null_mut();
         EnumWindows(Some(cb), &mut found as *mut HWND as LPARAM);
-        if found.is_null() {
-            return false;
-        }
+        found
+    }
+}
+
+/// True only if Entropia is the current foreground window. Used to gate the
+/// heartbeat ping so it never steals focus away from another app.
+#[cfg(windows)]
+pub fn entropia_is_focused() -> bool {
+    use winapi::um::winuser::GetForegroundWindow;
+    let hwnd = find_entropia();
+    !hwnd.is_null() && unsafe { GetForegroundWindow() == hwnd }
+}
+
+/// Locate the Entropia window and focus it. Returns false if the game isn't running.
+#[cfg(windows)]
+pub fn focus_entropia() -> bool {
+    use winapi::um::winuser::{IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE};
+
+    let found = find_entropia();
+    if found.is_null() {
+        return false;
+    }
+    unsafe {
         if IsIconic(found) != 0 {
             ShowWindow(found, SW_RESTORE);
         }
         SetForegroundWindow(found);
-        true
     }
+    true
 }
 
 /// Synthesize `<` (Shift + comma) as HARDWARE SCANCODES. CryEngine (Entropia)
@@ -82,6 +98,10 @@ pub fn send_position_key() {
 // ── Non-Windows stubs ──
 #[cfg(not(windows))]
 pub fn focus_entropia() -> bool {
+    false
+}
+#[cfg(not(windows))]
+pub fn entropia_is_focused() -> bool {
     false
 }
 #[cfg(not(windows))]

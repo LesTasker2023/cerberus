@@ -20,6 +20,10 @@ pub struct Poi {
     pub pvp_lootable: bool,
     #[serde(default)]
     pub notes: Option<String>,
+    /// Sector this POI is anchored to — named after a space station, assigned by
+    /// hand. Defaulted so existing stores load unchanged.
+    #[serde(default)]
+    pub sector: Option<String>,
 }
 
 /// Fields accepted when creating/updating a POI (id assigned/looked-up server-side).
@@ -33,6 +37,8 @@ pub struct PoiInput {
     #[serde(default)]
     pub pvp_lootable: bool,
     pub notes: Option<String>,
+    #[serde(default)]
+    pub sector: Option<String>,
 }
 
 /// One row of the bundled seed (no id).
@@ -47,6 +53,8 @@ struct SeedPoi {
     pvp_lootable: bool,
     #[serde(default)]
     notes: String,
+    #[serde(default)]
+    sector: Option<String>,
 }
 
 const SEED: &str = include_str!("seed_pois.json");
@@ -65,6 +73,7 @@ fn seed_items() -> Vec<Poi> {
             eu_z: s.eu_z,
             pvp_lootable: s.pvp_lootable,
             notes: (!s.notes.is_empty()).then_some(s.notes),
+            sector: s.sector,
         })
         .collect()
 }
@@ -76,6 +85,7 @@ pub struct PoiStore {
 
 impl PoiStore {
     pub fn open(path: PathBuf) -> Self {
+        // Seed only on a fresh install — never touch an existing curated store.
         let items = if path.exists() {
             std::fs::read_to_string(&path)
                 .ok()
@@ -83,10 +93,7 @@ impl PoiStore {
                 .unwrap_or_default()
         } else {
             let seeded = seed_items();
-            let _ = std::fs::write(
-                &path,
-                serde_json::to_string_pretty(&seeded).unwrap_or_default(),
-            );
+            let _ = std::fs::write(&path, serde_json::to_string_pretty(&seeded).unwrap_or_default());
             seeded
         };
         Self {
@@ -114,6 +121,7 @@ impl PoiStore {
             eu_z: input.eu_z,
             pvp_lootable: input.pvp_lootable,
             notes: input.notes.filter(|s| !s.trim().is_empty()),
+            sector: input.sector.filter(|s| !s.trim().is_empty()),
         };
         let mut items = self.items.lock().expect("poi store poisoned");
         items.push(poi.clone());
@@ -131,6 +139,7 @@ impl PoiStore {
         poi.eu_z = input.eu_z;
         poi.pvp_lootable = input.pvp_lootable;
         poi.notes = input.notes.filter(|s| !s.trim().is_empty());
+        poi.sector = input.sector.filter(|s| !s.trim().is_empty());
         let updated = poi.clone();
         self.persist(&items)?;
         Ok(updated)

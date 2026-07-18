@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { usePois, Poi } from "../hooks/usePois";
 import { IconTrash } from "./icons";
 
+// Creatable POI categories, grouped to match the map's filter buckets.
 const CATS = [
+  { key: "player", label: "Player" },
+  { key: "mob", label: "Mob Zone" },
   { key: "space-station", label: "Space Station" },
   { key: "warp-gate", label: "Warp Gate" },
-  { key: "landmark", label: "Landmark" },
   { key: "outlaw-zone", label: "Outlaw Zone" },
-  { key: "station", label: "Station" },
+  { key: "landmark", label: "Landmark (Misc)" },
 ];
 
 /** Parse `[Space, 58265, 69229, -804, Waypoint]` → coords (+ optional name). */
@@ -20,7 +22,7 @@ function parseCoords(text: string): { x: number; y: number; z: number; name?: st
   return { x: +m[1], y: +m[2], z: +m[3], name: label && !/^waypoint$/i.test(label) ? label : undefined };
 }
 
-const EMPTY = { name: "", category: "space-station", x: "", y: "", z: "", pvp: false, notes: "" };
+const EMPTY = { name: "", category: "player", x: "", y: "", z: "", pvp: false, notes: "", sector: "" };
 
 export function PoiEditor({
   poiStore,
@@ -36,11 +38,34 @@ export function PoiEditor({
   const [paste, setPaste] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
+  const [sort, setSort] = useState<"name" | "category" | "sector">("name");
   const [formOpen, setFormOpen] = useState(false);
 
-  const shown = search.trim()
-    ? items.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
-    : items;
+  // Sectors are named after the space stations — assigned by hand per POI.
+  const sectors = useMemo(
+    () =>
+      [...new Set(items.filter((p) => p.category === "space-station").map((p) => p.name))].sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    [items],
+  );
+
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return items
+      .filter((p) => (!q || p.name.toLowerCase().includes(q)) && (catFilter === "all" || p.category === catFilter))
+      .sort((a, b) => {
+        if (sort === "category") return a.category.localeCompare(b.category) || a.name.localeCompare(b.name);
+        if (sort === "sector") {
+          // Unassigned sort last, then by sector, then name.
+          const as = a.sector ?? "￿";
+          const bs = b.sector ?? "￿";
+          return as.localeCompare(bs) || a.name.localeCompare(b.name);
+        }
+        return a.name.localeCompare(b.name);
+      });
+  }, [items, search, catFilter, sort]);
 
   const set = (patch: Partial<typeof f>) => setF((prev) => ({ ...prev, ...patch }));
 
@@ -75,6 +100,7 @@ export function PoiEditor({
       z: String(p.eu_z),
       pvp: p.pvp_lootable,
       notes: p.notes ?? "",
+      sector: p.sector ?? "",
     });
     setError(null);
   };
@@ -93,6 +119,7 @@ export function PoiEditor({
       eu_z: Number(f.z),
       pvp_lootable: f.pvp,
       notes: f.notes.trim() || null,
+      sector: f.sector.trim() || null,
     };
     try {
       if (editId) await update(editId, input);
@@ -120,6 +147,26 @@ export function PoiEditor({
         onChange={(e) => setSearch(e.target.value)}
       />
 
+      <div className="poied__controls">
+        <select className="input poied__ctl" value={catFilter} onChange={(e) => setCatFilter(e.target.value)}>
+          <option value="all">All types</option>
+          {CATS.map((c) => (
+            <option key={c.key} value={c.key}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="input poied__ctl"
+          value={sort}
+          onChange={(e) => setSort(e.target.value as "name" | "category" | "sector")}
+        >
+          <option value="name">Sort: Name</option>
+          <option value="category">Sort: Type</option>
+          <option value="sector">Sort: Sector</option>
+        </select>
+      </div>
+
       <div className="poied__list">
         {shown.length === 0 ? (
           <p className="poied__empty">{items.length === 0 ? "No POIs yet." : "No matches."}</p>
@@ -137,6 +184,7 @@ export function PoiEditor({
                 <span className="poirow__name">{p.name}</span>
                 <span className="poirow__cat">
                   {p.category.replace("asteroid-", "").replace("-", " ")}
+                  {p.sector && <span className="poirow__sector">{p.sector}</span>}
                 </span>
               </button>
               <button
@@ -189,6 +237,15 @@ export function PoiEditor({
           {CATS.map((c) => (
             <option key={c.key} value={c.key}>
               {c.label}
+            </option>
+          ))}
+        </select>
+
+        <select className="input" value={f.sector} onChange={(e) => set({ sector: e.target.value })}>
+          <option value="">— No sector —</option>
+          {sectors.map((s) => (
+            <option key={s} value={s}>
+              {s}
             </option>
           ))}
         </select>

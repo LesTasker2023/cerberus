@@ -1,7 +1,18 @@
 import type { ReactNode } from "react";
 import type { DiscordSession } from "../hooks/useAuth";
 
-export type Page = "home" | "feed" | "rocks" | "combat" | "bestiary" | "map" | "media" | "settings";
+export type Page =
+  | "home"
+  | "feed"
+  | "rocks"
+  | "combat"
+  | "bestiary"
+  | "map"
+  | "codex"
+  | "media"
+  | "clan"
+  | "profile"
+  | "settings";
 
 interface NavItem {
   page: Page;
@@ -17,29 +28,39 @@ export function Sidebar({
   onNavigate,
   watching,
   session,
-  onLogout,
-  dockOpen,
-  onToggleDock,
+  collapsed,
+  onToggleCollapse,
 }: {
   page: Page;
   onNavigate: (p: Page) => void;
   watching: boolean;
   session: DiscordSession | null | undefined;
-  onLogout: () => void;
-  dockOpen: boolean;
-  onToggleDock: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }) {
+  const home: NavItem = { page: "home", label: "Dashboard", icon: <IconDeck /> };
   const groups: { label: string; items: NavItem[] }[] = [
-    { label: "Command", items: [{ page: "home", label: "Dashboard", icon: <IconDeck /> }] },
     {
-      label: "Tools",
+      label: "Live",
       items: [
         { page: "feed", label: "Feed", icon: <IconFeed />, live: watching },
+        { page: "clan", label: "Clan Sync", icon: <IconClan /> },
+        { page: "media", label: "Media", icon: <IconMedia /> },
+      ],
+    },
+    {
+      label: "Resources",
+      items: [
+        { page: "map", label: "Map", icon: <IconMap /> },
+        { page: "codex", label: "Database", icon: <IconCodex /> },
+        { page: "bestiary", label: "Observations", icon: <IconBestiary /> },
+      ],
+    },
+    {
+      label: "Automation",
+      items: [
         { page: "rocks", label: "Rock Logger", icon: <IconRocks /> },
         { page: "combat", label: "Mob Logger", icon: <IconCombat /> },
-        { page: "bestiary", label: "Bestiary", icon: <IconBestiary /> },
-        { page: "map", label: "Map", icon: <IconMap /> },
-        { page: "media", label: "Media", icon: <IconMedia /> },
       ],
     },
     { label: "System", items: [{ page: "settings", label: "Config", icon: <IconConfig /> }] },
@@ -47,12 +68,30 @@ export function Sidebar({
 
   return (
     <aside className="side">
+      <button
+        className="side__collapse"
+        onClick={onToggleCollapse}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      >
+        <IconCollapse />
+      </button>
+
       <button className="side__brand" onClick={() => onNavigate("home")} title="Command Deck">
-        <span className="side__diamond" />
-        CERBERUS
+        <img className="side__mark" src="/logo.png" alt="" />
+        <span className="side__brandtext">CERBERUS</span>
       </button>
 
       <nav className="side__nav">
+        <button
+          className={`navitem navitem--top ${page === home.page ? "navitem--on" : ""}`}
+          onClick={() => onNavigate(home.page)}
+          title={home.label}
+        >
+          <span className="navitem__icon">{home.icon}</span>
+          <span className="navitem__label">{home.label}</span>
+        </button>
+
         {groups.map((g) => (
           <div key={g.label} className="navgroup">
             <div className="navgroup__lbl">{g.label}</div>
@@ -61,6 +100,7 @@ export function Sidebar({
                 key={it.page}
                 className={`navitem ${page === it.page ? "navitem--on" : ""}`}
                 onClick={() => onNavigate(it.page)}
+                title={it.label}
               >
                 <span className="navitem__icon">{it.icon}</span>
                 <span className="navitem__label">{it.label}</span>
@@ -72,29 +112,18 @@ export function Sidebar({
       </nav>
 
       <div className="side__foot">
-        <button
-          className={`sidebtn ${dockOpen ? "sidebtn--on" : ""}`}
-          onClick={onToggleDock}
-          title="Floating HUD dock"
-        >
-          <IconDock />
-          HUD Dock
-        </button>
-
-        <div className={`sidestat ${watching ? "sidestat--on" : ""}`}>
-          <span className="sidestat__dot" />
-          {watching ? "Watcher online" : "Watcher offline"}
-        </div>
-
         {session && (
-          <button className="sideuser" onClick={onLogout} title="Sign out">
+          <button
+            className={`sideuser ${page === "profile" ? "sideuser--on" : ""}`}
+            onClick={() => onNavigate("profile")}
+            title="Player profile"
+          >
             {session.avatar_url ? (
               <img className="sideuser__av" src={session.avatar_url} alt="" />
             ) : (
               <span className="sideuser__av sideuser__av--none" />
             )}
             <span className="sideuser__name">{session.display_name}</span>
-            <IconPower />
           </button>
         )}
       </div>
@@ -165,6 +194,23 @@ function IconMap() {
     </svg>
   );
 }
+function IconCodex() {
+  return (
+    <svg {...S}>
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v14H6a2 2 0 0 0-2 2z" />
+      <path d="M8 8h7M8 11h7" opacity="0.6" />
+    </svg>
+  );
+}
+function IconClan() {
+  return (
+    <svg {...S}>
+      <circle cx="9" cy="9" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <path d="M16 6.5a3 3 0 0 1 0 5.5M17.5 19a5.5 5.5 0 0 0-3-4.9" opacity="0.6" />
+    </svg>
+  );
+}
 function IconMedia() {
   return (
     <svg {...S}>
@@ -183,18 +229,11 @@ function IconConfig() {
     </svg>
   );
 }
-function IconDock() {
+function IconCollapse() {
   return (
     <svg {...S}>
-      <path d="M12 2 20 6.5 20 15.5 12 20 4 15.5 4 6.5Z" />
-      <circle cx="12" cy="11" r="2" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-function IconPower() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className="sideuser__out">
-      <path d="M12 4v7M7 6a7 7 0 1 0 10 0" />
+      <path d="M14 7l-5 5 5 5" />
+      <path d="M19 5v14" opacity="0.5" />
     </svg>
   );
 }

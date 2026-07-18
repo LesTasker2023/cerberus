@@ -453,6 +453,10 @@ fn emit_update(app: &AppHandle) {
 }
 
 /* ── Persisted encounter store ── */
+
+/// Bundled starter spawn log — shipped mob encounters, seeded on fresh install only.
+const SEED: &str = include_str!("seed_mobs.json");
+
 pub struct EncounterStore {
     path: PathBuf,
     items: Mutex<Vec<Encounter>>,
@@ -460,10 +464,18 @@ pub struct EncounterStore {
 
 impl EncounterStore {
     pub fn open(path: PathBuf) -> Self {
-        let items = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|j| serde_json::from_str(&j).ok())
-            .unwrap_or_default();
+        // Seed the shipped spawn log only on a fresh install — the user's own
+        // logged encounters win and persist across updates.
+        let items: Vec<Encounter> = if path.exists() {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or_default()
+        } else {
+            let seeded: Vec<Encounter> = serde_json::from_str(SEED).unwrap_or_default();
+            let _ = std::fs::write(&path, serde_json::to_string_pretty(&seeded).unwrap_or_default());
+            seeded
+        };
         Self {
             path,
             items: Mutex::new(items),

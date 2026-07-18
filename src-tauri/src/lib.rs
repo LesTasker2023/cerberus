@@ -308,6 +308,11 @@ fn capture_coords(state: &AppState) -> Result<Coords, String> {
 /// Fire the position key and return the freshly captured coordinates. Backs the
 /// map's click-to-measure: ping the player's live position on demand.
 #[tauri::command]
+fn entropia_focused() -> bool {
+    input::entropia_is_focused()
+}
+
+#[tauri::command]
 fn capture_position(state: State<'_, AppState>) -> Result<Coords, String> {
     capture_coords(&state)
 }
@@ -343,6 +348,56 @@ fn auth_configured() -> bool {
 #[tauri::command]
 fn nexus_item(name: String) -> nexus::NexusItem {
     nexus::lookup(&name)
+}
+
+/// Fetch a full Nexus entity by its `$Url` path (e.g. `/weapons/2629`) for the
+/// Codex — proxied here so the webview escapes Nexus's 403/CORS block.
+#[tauri::command]
+fn nexus_get(path: String) -> Result<serde_json::Value, String> {
+    nexus::get_path(&path)
+}
+
+fn nexus_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("nexus"))
+}
+
+/// Read a disk-cached Codex index (rebuilt from live Nexus). None → the
+/// frontend falls back to the bundled first-run seed.
+#[tauri::command]
+fn nexus_index(app: AppHandle, name: String) -> Option<serde_json::Value> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+        return None;
+    }
+    let p = nexus_dir(&app)?.join(format!("{name}.json"));
+    serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
+}
+
+/// The disk snapshot's manifest (builtAt + counts), if a refresh has run.
+#[tauri::command]
+fn nexus_meta(app: AppHandle) -> Option<serde_json::Value> {
+    let p = nexus_dir(&app)?.join("manifest.json");
+    serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
+}
+
+/// Force a rebuild of the Codex indices from live Nexus. Runs off-thread and
+/// emits `nexus:refresh` {state} events; the UI listens and reloads on `done`.
+#[tauri::command]
+fn nexus_refresh(app: AppHandle) {
+    let dir = match nexus_dir(&app) {
+        Some(d) => d,
+        None => return,
+    };
+    std::thread::spawn(move || {
+        let _ = app.emit("nexus:refresh", serde_json::json!({ "state": "running" }));
+        match nexus::rebuild(&dir) {
+            Ok(m) => {
+                let _ = app.emit("nexus:refresh", serde_json::json!({ "state": "done", "manifest": m }));
+            }
+            Err(e) => {
+                let _ = app.emit("nexus:refresh", serde_json::json!({ "state": "error", "error": e }));
+            }
+        }
+    });
 }
 
 /// Scout a player — pull their EntropiaCentral dossier for the in-app popover.
@@ -516,6 +571,8 @@ struct OverlayStates {
     capregion: bool,
     mobcap: bool,
     radar: bool,
+    waypoints: bool,
+    crosshair: bool,
     dock: bool,
 }
 
@@ -530,6 +587,8 @@ fn overlay_states_of(app: &AppHandle) -> OverlayStates {
         capregion: vis("capregion"),
         mobcap: vis("mobcap"),
         radar: vis("radar"),
+        waypoints: vis("waypoints"),
+        crosshair: vis("crosshair"),
         dock: vis("dock"),
     }
 }
@@ -574,6 +633,23 @@ fn toggle_window(app: &AppHandle, label: &str) -> Result<bool, String> {
 #[tauri::command]
 fn overlay_states(app: AppHandle) -> OverlayStates {
     overlay_states_of(&app)
+}
+
+/// Clan location broadcast toggle. Shared across windows (topbar + HUD dock) via
+/// an atomic flag + a `broadcast:changed` event; the main window does the actual
+/// Supabase upsert on each position update while this is on.
+static BROADCASTING: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn set_broadcast(app: AppHandle, on: bool) -> bool {
+    BROADCASTING.store(on, Ordering::Relaxed);
+    let _ = app.emit("broadcast:changed", on);
+    on
+}
+
+#[tauri::command]
+fn get_broadcast() -> bool {
+    BROADCASTING.load(Ordering::Relaxed)
 }
 
 /// Hide a window by label + broadcast the change (used by overlays' own close
@@ -819,13 +895,30 @@ fn stop_watch(app: AppHandle, state: State<'_, AppState>) -> WatchStatus {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Port for the release-only localhost asset server (see the navigate call in
+    // setup). Fixed fallback if picking a free port fails.
+    let port: u16 = portpicker::pick_unused_port().unwrap_or(1430);
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_localhost::Builder::new(port).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|app| {
+        .setup(move |app| {
+            // In release, point the main window at the localhost server so the
+            // Media page's Twitch embed gets a `localhost` origin (Tauri serves
+            // from http://tauri.localhost by default, which Twitch rejects). The
+            // window is still hidden behind the splash here, so the reload is
+            // invisible. Overlays don't embed anything, so they're left as-is.
+            #[cfg(not(debug_assertions))]
+            if let Some(mut main) = app.get_webview_window("main") {
+                if let Ok(url) = format!("http://localhost:{port}").parse::<tauri::Url>() {
+                    let _ = main.navigate(url);
+                }
+            }
+
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let settings_path = dir.join("settings.json");
@@ -848,6 +941,32 @@ pub fn run() {
             // Start the always-on EntropiaCentral intel client (universe-wide
             // globals + trades). Independent of the local chat.log watcher.
             ec::start(app.handle().clone());
+
+            // Keep the Codex's Nexus indices fresh: rebuild from live Nexus when
+            // the on-disk snapshot is missing or past its daily TTL. Checks on
+            // boot, then every 6h so long-running sessions still refresh daily.
+            // The bundled files remain the first-run/offline seed; a manual
+            // "Refresh from Nexus" in Config triggers rebuilds on demand.
+            {
+                let handle = app.handle().clone();
+                let nexus_cache = dir.join("nexus");
+                std::thread::spawn(move || loop {
+                    if nexus::is_stale(&nexus_cache) {
+                        let _ = handle.emit("nexus:refresh", serde_json::json!({ "state": "running" }));
+                        match nexus::rebuild(&nexus_cache) {
+                            Ok(m) => {
+                                let _ = handle
+                                    .emit("nexus:refresh", serde_json::json!({ "state": "done", "manifest": m }));
+                            }
+                            Err(e) => {
+                                let _ = handle
+                                    .emit("nexus:refresh", serde_json::json!({ "state": "error", "error": e }));
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+                });
+            }
 
             // Restore both capture boxes to their last position/size and keep
             // them persisted as the user drags/resizes.
@@ -980,12 +1099,17 @@ pub fn run() {
             delete_poi,
             set_capture_meta,
             capture_and_log,
+            entropia_focused,
             capture_position,
             discord_login,
             discord_logout,
             auth_status,
             auth_configured,
             nexus_item,
+            nexus_get,
+            nexus_index,
+            nexus_meta,
+            nexus_refresh,
             ec_avatar,
             ec_media,
             toggle_panel,
@@ -993,6 +1117,8 @@ pub fn run() {
             toggle_radar,
             toggle_mobcap,
             toggle_dock,
+            set_broadcast,
+            get_broadcast,
             set_overlay,
             set_combat,
             overlay_states,

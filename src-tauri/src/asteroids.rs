@@ -38,6 +38,9 @@ pub struct AsteroidInput {
     pub notes: Option<String>,
 }
 
+/// Bundled starter survey — shipped rocks, seeded on a fresh install only.
+const SEED: &str = include_str!("seed_rocks.json");
+
 /// JSON-file store, newest-first, guarded by a mutex.
 pub struct AsteroidStore {
     path: PathBuf,
@@ -46,10 +49,18 @@ pub struct AsteroidStore {
 
 impl AsteroidStore {
     pub fn open(path: PathBuf) -> Self {
-        let items = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|j| serde_json::from_str(&j).ok())
-            .unwrap_or_default();
+        // Seed the shipped survey only on a fresh install — never touch an
+        // existing log (the user's own finds win and persist across updates).
+        let items: Vec<Asteroid> = if path.exists() {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or_default()
+        } else {
+            let seeded: Vec<Asteroid> = serde_json::from_str(SEED).unwrap_or_default();
+            let _ = std::fs::write(&path, serde_json::to_string_pretty(&seeded).unwrap_or_default());
+            seeded
+        };
         Self {
             path,
             items: Mutex::new(items),

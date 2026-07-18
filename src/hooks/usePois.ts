@@ -13,6 +13,8 @@ export interface Poi {
   eu_z: number;
   pvp_lootable: boolean;
   notes: string | null;
+  /** Sector this POI is anchored to — named after a space station. */
+  sector: string | null;
 }
 
 export interface PoiInput {
@@ -23,6 +25,7 @@ export interface PoiInput {
   eu_z: number;
   pvp_lootable: boolean;
   notes: string | null;
+  sector: string | null;
 }
 
 /** Editable POIs (stations / gates / landmarks / custom) — list + CRUD. */

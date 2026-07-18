@@ -1,0 +1,11 @@
+{
+  "builtAt": "2026-07-17T19:49:59.158Z",
+  "source": "delta api-cache",
+  "counts": {
+    "search-index": 11903,
+    "craft-index": 3215,
+    "material-usage": 1410,
+    "refining": 591,
+    "item-drops": 2348
+  }
+}
