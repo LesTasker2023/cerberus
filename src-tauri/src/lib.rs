@@ -895,30 +895,13 @@ fn stop_watch(app: AppHandle, state: State<'_, AppState>) -> WatchStatus {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Port for the release-only localhost asset server (see the navigate call in
-    // setup). Fixed fallback if picking a free port fails.
-    let port: u16 = portpicker::pick_unused_port().unwrap_or(1430);
-
     tauri::Builder::default()
-        .plugin(tauri_plugin_localhost::Builder::new(port).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(move |app| {
-            // In release, point the main window at the localhost server so the
-            // Media page's Twitch embed gets a `localhost` origin (Tauri serves
-            // from http://tauri.localhost by default, which Twitch rejects). The
-            // window is still hidden behind the splash here, so the reload is
-            // invisible. Overlays don't embed anything, so they're left as-is.
-            #[cfg(not(debug_assertions))]
-            if let Some(mut main) = app.get_webview_window("main") {
-                if let Ok(url) = format!("http://localhost:{port}").parse::<tauri::Url>() {
-                    let _ = main.navigate(url);
-                }
-            }
-
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let settings_path = dir.join("settings.json");
