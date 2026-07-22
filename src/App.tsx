@@ -23,7 +23,6 @@ import { Login } from "./pages/Login";
 import { useAuth, isAuthed } from "./hooks/useAuth";
 import { useLogWatch } from "./hooks/useLogWatch";
 import { useTrackerSession } from "./hooks/useTrackerSession";
-import { useFeedIntel } from "./hooks/useFeedIntel";
 import { useEcIntel } from "./hooks/useEcIntel";
 import { useAsteroids } from "./hooks/useAsteroids";
 import { useEncounters } from "./hooks/useEncounters";
@@ -38,7 +37,6 @@ import { upsertLocation } from "./lib/locations";
 export default function App() {
   const auth = useAuth();
   const watch = useLogWatch();
-  const intel = useFeedIntel();
   const ec = useEcIntel();
   const rocks = useAsteroids();
   const encounters = useEncounters();
@@ -176,7 +174,7 @@ export default function App() {
 
   const TITLES: Record<Page, string> = {
     home: "Dashboard",
-    feed: "Intel Feed",
+    feed: "Live Feed",
     rocks: "Rock Logger",
     combat: "Mob Logger",
     bestiary: "Observations",
@@ -233,7 +231,7 @@ export default function App() {
 
         <main className="content">
           {page === "home" && <Dashboard ec={ec} />}
-          {page === "feed" && <Feed watch={watch} intel={intel} />}
+          {page === "feed" && <Feed watch={watch} />}
           {page === "rocks" && <Asteroids store={rocks} />}
           {page === "combat" && <Combat store={encounters} />}
           {page === "bestiary" && <MobDb store={encounters} />}
