@@ -15,7 +15,7 @@ const FILTERS: { label: string; kind: string | null }[] = [
 
 /** Codex — the Nexus wiki. Search the bundled catalogue, then deep-dive the
  *  relationship graph. Every linked entity opens in place with back/forward. */
-export function Codex() {
+export function Codex({ initialUrl }: { initialUrl?: string | null }) {
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<string | null>(null);
   const [results, setResults] = useState<SearchEntry[]>([]);
@@ -33,6 +33,13 @@ export function Codex() {
     setStack((s) => [...s.slice(0, pos + 1), url]);
     setPos((p) => p + 1);
   }
+
+  // Deep link (e.g. "view in Database" from the Tracker's loot list).
+  useEffect(() => {
+    if (!initialUrl) return;
+    setStack([initialUrl]);
+    setPos(0);
+  }, [initialUrl]);
 
   // Debounced search (re-runs when a refresh bumps `rev`).
   useEffect(() => {

@@ -22,6 +22,7 @@ import { Settings } from "./pages/Settings";
 import { Login } from "./pages/Login";
 import { useAuth, isAuthed } from "./hooks/useAuth";
 import { useLogWatch } from "./hooks/useLogWatch";
+import { useTrackerSession } from "./hooks/useTrackerSession";
 import { useFeedIntel } from "./hooks/useFeedIntel";
 import { useEcIntel } from "./hooks/useEcIntel";
 import { useAsteroids } from "./hooks/useAsteroids";
@@ -46,7 +47,16 @@ export default function App() {
   const broadcast = useBroadcast();
   const clanLocations = useLocations();
   useUpdater();
+  // Owned at the root so a hunt survives page changes (the Tracker page is
+  // conditionally rendered, so state living inside it would be destroyed).
+  const tracker = useTrackerSession();
   const [page, setPage] = useState<Page>("home");
+  /** Entity the Database should open on arrival (set by "view in Database" links). */
+  const [codexUrl, setCodexUrl] = useState<string | null>(null);
+  const openInDb = (url: string) => {
+    setCodexUrl(url);
+    setPage("codex");
+  };
   const [dockOpen, setDockOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(
     () => localStorage.getItem("rail-collapsed") === "1",
@@ -236,13 +246,13 @@ export default function App() {
               presence={clanLocations.filter((l) => l.pilot_id !== auth.session?.user_id)}
             />
           )}
-          {page === "codex" && <Codex />}
+          {page === "codex" && <Codex initialUrl={codexUrl} />}
           {page === "media" && <Media />}
           {page === "clan" && <ClanFeed pilot={auth.session?.display_name} />}
           {page === "delboy" && <DelBoy />}
           {page === "arb" && <ArbBoard />}
           {page === "trade" && <Trade />}
-          {page === "tracker" && <Tracker />}
+          {page === "tracker" && <Tracker tracker={tracker} onOpenDb={openInDb} />}
           {page === "profile" && (
             <Profile
               session={auth.session}

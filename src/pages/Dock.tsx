@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useBroadcast } from "../hooks/useBroadcast";
+import { FEATURES } from "../lib/features";
 
 interface OverlayStates {
   panel: boolean;
@@ -69,13 +70,15 @@ export function Dock() {
         >
           <IconRock />
         </button>
-        <button
-          className={`dockbtn ${combat ? "dockbtn--on" : ""}`}
-          onClick={() => setMob(!combat)}
-          title="Mob logger — combat capture + scanner"
-        >
-          <IconMob />
-        </button>
+        {FEATURES.mobLogger && (
+          <button
+            className={`dockbtn ${combat ? "dockbtn--on" : ""}`}
+            onClick={() => setMob(!combat)}
+            title="Mob logger — combat capture + scanner"
+          >
+            <IconMob />
+          </button>
+        )}
         <button
           className={`dockbtn ${st.radar ? "dockbtn--on" : ""}`}
           onClick={() => setOverlay("radar", !st.radar)}
@@ -104,13 +107,15 @@ export function Dock() {
         >
           <IconCross />
         </button>
-        <button
-          className={`dockbtn ${st.calib ? "dockbtn--on" : ""}`}
-          onClick={() => setOverlay("calib", !st.calib)}
-          title="Range calibrator — dial in the reticle offset"
-        >
-          <IconCalib />
-        </button>
+        {FEATURES.rangeCalibrator && (
+          <button
+            className={`dockbtn ${st.calib ? "dockbtn--on" : ""}`}
+            onClick={() => setOverlay("calib", !st.calib)}
+            title="Range calibrator — dial in the reticle offset"
+          >
+            <IconCalib />
+          </button>
+        )}
 
         <div className="dock__grip" data-tauri-drag-region title="Drag">
           ⠿

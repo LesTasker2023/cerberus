@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { useLogWatch } from "../hooks/useLogWatch";
 import { useNexusSnapshot } from "../hooks/useNexusSnapshot";
+import { FEATURES } from "../lib/features";
 import { loadCrosshair, saveCrosshair, type CrosshairConfig } from "../lib/crosshair";
 
 interface Settings {
@@ -258,12 +259,14 @@ function CrosshairSettings() {
         >
           {shown ? "Hide crosshair" : "Show crosshair"}
         </button>
-        <button
-          className="btn btn--ghost"
-          onClick={() => invoke("set_overlay", { label: "calib", on: true }).catch(() => {})}
-        >
-          Range calibrator
-        </button>
+        {FEATURES.rangeCalibrator && (
+          <button
+            className="btn btn--ghost"
+            onClick={() => invoke("set_overlay", { label: "calib", on: true }).catch(() => {})}
+          >
+            Range calibrator
+          </button>
+        )}
       </div>
 
       <div className="xcfg">
@@ -307,7 +310,7 @@ function CrosshairSettings() {
 /** Codex data source — rebuild the Nexus catalogue on demand. It also refreshes
  *  automatically once a day; item & mob pages always fetch live regardless. */
 function NexusData() {
-  const { builtAt, refreshing, refresh } = useNexusSnapshot();
+  const { builtAt, refreshing, error, refresh } = useNexusSnapshot();
   return (
     <div className="panel">
       <div className="panel__head">
@@ -320,13 +323,15 @@ function NexusData() {
 
       <div className="field">
         <span className="field__label">Catalogue snapshot</span>
-        <span className={`field__check ${refreshing ? "" : builtAt ? "ok" : "bad"}`}>
+        <span className={`field__check ${refreshing ? "" : error ? "bad" : builtAt ? "ok" : "bad"}`}>
           <span className="dot" />
           {refreshing
             ? "Rebuilding from live Nexus…"
-            : builtAt
-              ? `Updated ${relTime(builtAt)}`
-              : "Bundled seed — not yet refreshed from Nexus"}
+            : error
+              ? `Refresh failed — ${error}`
+              : builtAt
+                ? `Updated ${relTime(builtAt)}`
+                : "Bundled seed — not yet refreshed from Nexus"}
         </span>
       </div>
 

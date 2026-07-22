@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { DiscordSession } from "../hooks/useAuth";
+import { FEATURES } from "../lib/features";
 
 export type Page =
   | "home"
@@ -66,7 +67,9 @@ export function Sidebar({
       label: "Automation",
       items: [
         { page: "rocks", label: "Rock Logger", icon: <IconRocks /> },
-        { page: "combat", label: "Mob Logger", icon: <IconCombat /> },
+        ...(FEATURES.mobLogger
+          ? [{ page: "combat", label: "Mob Logger", icon: <IconCombat /> } as NavItem]
+          : []),
         { page: "trade", label: "Trade", icon: <IconDollar /> },
         { page: "tracker", label: "Tracker", icon: <IconTracker /> },
       ],

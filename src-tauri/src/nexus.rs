@@ -171,14 +171,15 @@ const REFRESH_TTL: Duration = Duration::from_secs(24 * 3600);
 
 fn fetch_list(path: &str) -> Result<Vec<Value>, String> {
     let url = format!("https://api.entropianexus.com{path}");
-    let body = ureq::get(&url)
+    // NB: ureq's `into_string()` hard-caps the body at 10 MB and /mobs is ~14 MB,
+    // which silently failed the whole rebuild. Parse straight from the reader.
+    let v: Value = ureq::get(&url)
         .set("User-Agent", UA)
         .set("Accept", "application/json")
         .call()
         .map_err(|e| e.to_string())?
-        .into_string()
+        .into_json()
         .map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     if let Some(arr) = v.as_array() {
         Ok(arr.clone())
     } else if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {

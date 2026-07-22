@@ -9,19 +9,26 @@ import { nexusMeta, nexusRefresh, resetIndexes } from "../lib/codex/store";
 export function useNexusSnapshot() {
   const [builtAt, setBuiltAt] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [rev, setRev] = useState(0);
 
   useEffect(() => {
     nexusMeta().then((m) => setBuiltAt(m?.builtAt ?? null));
-    const un = listen<{ state: string; manifest?: { builtAt?: string } }>("nexus:refresh", (e) => {
-      const s = e.payload.state;
-      setRefreshing(s === "running");
-      if (s === "done") {
-        setBuiltAt(e.payload.manifest?.builtAt ?? new Date().toISOString());
-        resetIndexes(); // drop memoised indices so the next read hits fresh disk
-        setRev((r) => r + 1);
-      }
-    });
+    const un = listen<{ state: string; error?: string; manifest?: { builtAt?: string } }>(
+      "nexus:refresh",
+      (e) => {
+        const s = e.payload.state;
+        setRefreshing(s === "running");
+        if (s === "running") setError(null);
+        if (s === "error") setError(e.payload.error ?? "refresh failed");
+        if (s === "done") {
+          setError(null);
+          setBuiltAt(e.payload.manifest?.builtAt ?? new Date().toISOString());
+          resetIndexes(); // drop memoised indices so the next read hits fresh disk
+          setRev((r) => r + 1);
+        }
+      },
+    );
     return () => {
       un.then((off) => off());
     };
@@ -29,8 +36,12 @@ export function useNexusSnapshot() {
 
   const refresh = useCallback(() => {
     setRefreshing(true);
-    nexusRefresh().catch(() => setRefreshing(false));
+    setError(null);
+    nexusRefresh().catch((e) => {
+      setRefreshing(false);
+      setError(String(e));
+    });
   }, []);
 
-  return { builtAt, refreshing, rev, refresh };
+  return { builtAt, refreshing, error, rev, refresh };
 }

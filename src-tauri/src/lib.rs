@@ -11,6 +11,7 @@ mod input;
 mod nexus;
 mod ocr;
 mod poi;
+mod sessions;
 mod watcher;
 
 use std::path::PathBuf;
@@ -51,6 +52,9 @@ struct AppState {
     settings_path: PathBuf,
     settings: Mutex<Settings>,
     watching: Mutex<Arc<AtomicBool>>,
+    /// The chat.log path the live watcher resolved, so status can be queried
+    /// (not just inferred from a `watch:status` event that may predate a mount).
+    watch_path: Mutex<Option<String>>,
     asteroids: asteroids::AsteroidStore,
     pois: poi::PoiStore,
     capture: Mutex<CaptureMeta>,
@@ -58,6 +62,8 @@ struct AppState {
     combat: combat::CombatState,
     /// Finished mob encounters (positions, HP, loot, skills).
     encounters: combat::EncounterStore,
+    /// Persisted hunt-tracker sessions (live one + history).
+    sessions: sessions::SessionStore,
     /// Discord login + clan-membership gate.
     auth: auth::AuthState,
 }
@@ -203,9 +209,11 @@ fn start_watch(
     }
     watcher::spawn(resolved.clone(), running, app.clone());
 
+    let path_str = resolved.to_string_lossy().into_owned();
+    *state.watch_path.lock().expect("watch path poisoned") = Some(path_str.clone());
     let status = WatchStatus {
         watching: true,
-        path: Some(resolved.to_string_lossy().into_owned()),
+        path: Some(path_str),
     };
     let _ = app.emit("watch:status", &status);
     Ok(status)
@@ -555,12 +563,6 @@ fn log_at_position(app: &AppHandle, state: &AppState) -> Result<asteroids::Aster
     Ok(rock)
 }
 
-/// Set the label + type applied to the next capture (from any window).
-#[tauri::command]
-fn set_capture_meta(label: String, category: String, state: State<'_, AppState>) {
-    *state.capture.lock().expect("capture meta poisoned") = CaptureMeta { label, category };
-}
-
 /// Capture position and log it. Returns the new rock.
 #[tauri::command]
 fn capture_and_log(
@@ -681,30 +683,6 @@ fn toggle_dock(app: AppHandle) -> Result<bool, String> {
     toggle_window(&app, "dock")
 }
 
-/// Show/hide the always-on-top overlay panel.
-#[tauri::command]
-fn toggle_panel(app: AppHandle) -> Result<bool, String> {
-    toggle_window(&app, "panel")
-}
-
-/// Show/hide the draggable OCR capture box.
-#[tauri::command]
-fn toggle_capregion(app: AppHandle) -> Result<bool, String> {
-    toggle_window(&app, "capregion")
-}
-
-/// Show/hide the always-on-top battle radar.
-#[tauri::command]
-fn toggle_radar(app: AppHandle) -> Result<bool, String> {
-    toggle_window(&app, "radar")
-}
-
-/// Show/hide the mob OCR capture box.
-#[tauri::command]
-fn toggle_mobcap(app: AppHandle) -> Result<bool, String> {
-    toggle_window(&app, "mobcap")
-}
-
 /// All finished mob encounters, newest first.
 #[tauri::command]
 fn list_encounters(state: State<'_, AppState>) -> Vec<combat::Encounter> {
@@ -777,11 +755,12 @@ fn set_combat(app: AppHandle, state: State<'_, AppState>, on: bool) -> bool {
     on
 }
 
-/// Arm combat recording WITHOUT the engaged HUD — the Tracker uses this so a
-/// session records encounters silently, no overlay popping up.
+/// Arm/disarm the Tracker's raw shot/loot feed. Completely independent of the
+/// mob logger — it does not touch `enabled`, the engaged HUD, or encounters, so
+/// toggling the logger can never start or stop a tracker session.
 #[tauri::command]
-fn set_combat_capture(app: AppHandle, state: State<'_, AppState>, on: bool) -> bool {
-    set_combat_enabled(&app, state.inner(), on, false);
+fn set_combat_capture(state: State<'_, AppState>, on: bool) -> bool {
+    state.combat.capture.store(on, Ordering::Relaxed);
     on
 }
 
@@ -908,20 +887,49 @@ fn delete_poi(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<
     Ok(())
 }
 
-/// Stop the watcher.
+/* ── Hunt tracker sessions ── */
+
+/// Every saved session, newest first.
 #[tauri::command]
-fn stop_watch(app: AppHandle, state: State<'_, AppState>) -> WatchStatus {
-    state
+fn session_list(state: State<'_, AppState>) -> Vec<sessions::HuntSession> {
+    state.sessions.list()
+}
+
+/// The unfinished session to resume on boot, if any.
+#[tauri::command]
+fn session_current(state: State<'_, AppState>) -> Option<sessions::HuntSession> {
+    state.sessions.current()
+}
+
+/// Insert or replace a session by id. The Tracker calls this continuously for
+/// the live session, so a crash costs at most the debounce interval.
+#[tauri::command]
+fn session_save(
+    session: sessions::HuntSession,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.sessions.save(session)
+}
+
+#[tauri::command]
+fn session_delete(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.sessions.remove(&id)
+}
+
+/// Current watcher state. Queryable so a view mounting late (e.g. the Tracker)
+/// learns the truth instead of waiting on a `watch:status` event it may have
+/// already missed.
+#[tauri::command]
+fn watch_status(state: State<'_, AppState>) -> WatchStatus {
+    let watching = state
         .watching
         .lock()
         .expect("watch flag poisoned")
-        .store(false, Ordering::Relaxed);
-    let status = WatchStatus {
-        watching: false,
-        path: None,
-    };
-    let _ = app.emit("watch:status", &status);
-    status
+        .load(Ordering::Relaxed);
+    WatchStatus {
+        watching,
+        path: state.watch_path.lock().expect("watch path poisoned").clone(),
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -955,11 +963,13 @@ pub fn run() {
                 settings_path,
                 settings: Mutex::new(settings),
                 watching: Mutex::new(Arc::new(AtomicBool::new(false))),
+                watch_path: Mutex::new(None),
                 asteroids: asteroids::AsteroidStore::open(dir.join("asteroids.json")),
                 pois: poi::PoiStore::open(dir.join("pois.json")),
                 capture: Mutex::new(CaptureMeta::default()),
                 combat: combat::CombatState::default(),
                 encounters: combat::EncounterStore::open(dir.join("encounters.json")),
+                sessions: sessions::SessionStore::open(dir.join("sessions.json")),
                 auth: auth::AuthState::open(dir.join("session.json")),
             });
 
@@ -1118,7 +1128,11 @@ pub fn run() {
             detect_log_path,
             check_log_path,
             start_watch,
-            stop_watch,
+            watch_status,
+            session_list,
+            session_current,
+            session_save,
+            session_delete,
             list_asteroids,
             add_asteroid,
             delete_asteroid,
@@ -1126,7 +1140,6 @@ pub fn run() {
             add_poi,
             update_poi,
             delete_poi,
-            set_capture_meta,
             capture_and_log,
             entropia_focused,
             capture_position,
@@ -1142,10 +1155,6 @@ pub fn run() {
             ec_avatar,
             ec_media,
             auction_last_calls,
-            toggle_panel,
-            toggle_capregion,
-            toggle_radar,
-            toggle_mobcap,
             toggle_dock,
             set_broadcast,
             get_broadcast,

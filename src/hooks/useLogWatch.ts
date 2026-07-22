@@ -35,6 +35,11 @@ export function useLogWatch() {
   const idRef = useRef(0);
 
   useEffect(() => {
+    // Hydrate from the live state — a `watch:status` event may have fired
+    // before this mounted, which would otherwise leave us stuck on OFFLINE.
+    invoke<WatchStatus>("watch_status")
+      .then(setStatus)
+      .catch(() => {});
     const unLine = listen<LogLine>("log:line", (e) => {
       setItems((prev) => {
         const next = [{ ...e.payload, id: idRef.current++ }, ...prev];

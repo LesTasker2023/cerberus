@@ -65,8 +65,11 @@ pub struct Active {
 #[derive(Default)]
 pub struct CombatState {
     pub active: Mutex<Option<Active>>,
-    /// Whether the logger is armed — when off, log lines are ignored.
+    /// Whether the mob logger is armed — drives encounter grouping + the store.
     pub enabled: AtomicBool,
+    /// Whether the Tracker's raw shot/loot feed is armed. Fully independent of
+    /// `enabled` — either can run without the other.
+    pub capture: AtomicBool,
 }
 
 /* ── Line parsers ── */
@@ -264,16 +267,23 @@ pub fn process_line(app: &AppHandle, line: &LogLine) {
     let text = line.text.as_str();
     let state = app.state::<AppState>();
 
-    // Ignore everything unless the logger is armed.
-    if !state.combat.enabled.load(Ordering::Relaxed) {
+    // Two independent consumers: the Tracker's raw session feed (`capture`) and
+    // the mob logger's encounter grouping (`enabled`). Either can run alone.
+    let capturing = state.combat.capture.load(Ordering::Relaxed);
+    let logging = state.combat.enabled.load(Ordering::Relaxed);
+    if !capturing && !logging {
         return;
     }
 
     // Damage — opens a new encounter if idle, else adds to the open one.
     if let Some(c) = re_dmg().captures(text) {
         let dmg: f64 = c[1].parse().unwrap_or(0.0);
-        // Raw session feed — always fires, independent of encounter grouping.
-        let _ = app.emit("combat:shot", dmg);
+        if capturing {
+            let _ = app.emit("combat:shot", dmg);
+        }
+        if !logging {
+            return;
+        }
         let mut started: Option<String> = None;
         {
             let mut guard = state.combat.active.lock().expect("combat poisoned");
@@ -307,7 +317,12 @@ pub fn process_line(app: &AppHandle, line: &LogLine) {
         || text.contains("target Jammed")
         || text.contains("target resisted all damage")
     {
-        let _ = app.emit("combat:shot", 0.0_f64);
+        if capturing {
+            let _ = app.emit("combat:shot", 0.0_f64);
+        }
+        if !logging {
+            return;
+        }
         let mut guard = state.combat.active.lock().expect("combat poisoned");
         if let Some(a) = guard.as_mut() {
             a.enc.shots += 1;
@@ -317,8 +332,11 @@ pub fn process_line(app: &AppHandle, line: &LogLine) {
         return;
     }
 
-    // Skill XP — only while an encounter is open.
+    // Skill XP — mob logger only, and only while an encounter is open.
     if let Some(c) = re_xp().captures(text) {
+        if !logging {
+            return;
+        }
         let xp: f64 = c[1].parse().unwrap_or(0.0);
         let skill = c[2].to_string();
         let mut guard = state.combat.active.lock().expect("combat poisoned");
@@ -338,11 +356,24 @@ pub fn process_line(app: &AppHandle, line: &LogLine) {
     // Loot — report the value to the raw session feed unconditionally, then
     // fold it into the open encounter if one is running (mob-logger detail).
     if let Some(c) = re_loot().captures(text) {
-        let item = c[1].to_string();
+        // Some clients bracket the name ("[Shrapnel]") — normalise it so the
+        // tracker's per-item breakdown and the Codex lookup both match.
+        let item = c[1]
+            .trim()
+            .trim_matches(|ch| ch == '[' || ch == ']')
+            .to_string();
         let qty: i64 = c.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(1);
         let value: f64 = c[3].parse().unwrap_or(0.0);
         // Raw session feed — fires even with no open encounter (loot-only bursts).
-        let _ = app.emit("combat:loot", value);
+        if capturing {
+            let _ = app.emit(
+                "combat:loot",
+                serde_json::json!({ "item": item.as_str(), "qty": qty, "value": value }),
+            );
+        }
+        if !logging {
+            return;
+        }
         let mut guard = state.combat.active.lock().expect("combat poisoned");
         if let Some(a) = guard.as_mut() {
             match a.enc.loot.iter_mut().find(|l| l.item == item) {
