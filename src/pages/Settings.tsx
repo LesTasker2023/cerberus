@@ -258,6 +258,12 @@ function CrosshairSettings() {
         >
           {shown ? "Hide crosshair" : "Show crosshair"}
         </button>
+        <button
+          className="btn btn--ghost"
+          onClick={() => invoke("set_overlay", { label: "calib", on: true }).catch(() => {})}
+        >
+          Range calibrator
+        </button>
       </div>
 
       <div className="xcfg">

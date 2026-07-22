@@ -272,6 +272,8 @@ pub fn process_line(app: &AppHandle, line: &LogLine) {
     // Damage — opens a new encounter if idle, else adds to the open one.
     if let Some(c) = re_dmg().captures(text) {
         let dmg: f64 = c[1].parse().unwrap_or(0.0);
+        // Raw session feed — always fires, independent of encounter grouping.
+        let _ = app.emit("combat:shot", dmg);
         let mut started: Option<String> = None;
         {
             let mut guard = state.combat.active.lock().expect("combat poisoned");
@@ -297,6 +299,24 @@ pub fn process_line(app: &AppHandle, line: &LogLine) {
         return;
     }
 
+    // Missed / dodged / evaded / jammed / resisted — burns ammo so it counts as
+    // a shot (matches Artemis' ammo-consuming events) but deals no damage.
+    if text.contains("You missed")
+        || text.contains("target Dodged")
+        || text.contains("target Evaded")
+        || text.contains("target Jammed")
+        || text.contains("target resisted all damage")
+    {
+        let _ = app.emit("combat:shot", 0.0_f64);
+        let mut guard = state.combat.active.lock().expect("combat poisoned");
+        if let Some(a) = guard.as_mut() {
+            a.enc.shots += 1;
+            drop(guard);
+            emit_update(app);
+        }
+        return;
+    }
+
     // Skill XP — only while an encounter is open.
     if let Some(c) = re_xp().captures(text) {
         let xp: f64 = c[1].parse().unwrap_or(0.0);
@@ -315,11 +335,14 @@ pub fn process_line(app: &AppHandle, line: &LogLine) {
         return;
     }
 
-    // Loot — accumulate and arm the close timer.
+    // Loot — report the value to the raw session feed unconditionally, then
+    // fold it into the open encounter if one is running (mob-logger detail).
     if let Some(c) = re_loot().captures(text) {
         let item = c[1].to_string();
         let qty: i64 = c.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(1);
         let value: f64 = c[3].parse().unwrap_or(0.0);
+        // Raw session feed — fires even with no open encounter (loot-only bursts).
+        let _ = app.emit("combat:loot", value);
         let mut guard = state.combat.active.lock().expect("combat poisoned");
         if let Some(a) = guard.as_mut() {
             match a.enc.loot.iter_mut().find(|l| l.item == item) {
@@ -331,11 +354,9 @@ pub fn process_line(app: &AppHandle, line: &LogLine) {
             }
             a.enc.loot_value += value;
             a.loot_close_at = Some(Instant::now() + LOOT_CLOSE);
-        } else {
-            return;
+            drop(guard);
+            emit_update(app);
         }
-        drop(guard);
-        emit_update(app);
     }
 }
 

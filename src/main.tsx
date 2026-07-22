@@ -10,13 +10,16 @@ import { Dock } from "./pages/Dock";
 import { Waypoints } from "./pages/Waypoints";
 import { CombatHud } from "./pages/CombatHud";
 import { Crosshair } from "./pages/Crosshair";
+import { TradeCapture } from "./pages/TradeCapture";
+import { Calibrator } from "./pages/Calibrator";
+import { TrackerHud } from "./pages/TrackerHud";
 import { Splash } from "./pages/Splash";
 import "./styles.css";
 
 // One frontend, several windows — branch on the window label.
 const label = getCurrentWindow().label;
 if (
-  ["capregion", "mobcap", "panel", "radar", "dock", "waypoints", "combathud", "crosshair", "splash"].includes(
+  ["capregion", "mobcap", "panel", "radar", "dock", "waypoints", "combathud", "crosshair", "tradecap", "calib", "trackhud", "splash"].includes(
     label,
   )
 ) {
@@ -32,6 +35,9 @@ function root() {
   if (label === "waypoints") return <Waypoints />;
   if (label === "combathud") return <CombatHud />;
   if (label === "crosshair") return <Crosshair />;
+  if (label === "tradecap") return <TradeCapture />;
+  if (label === "calib") return <Calibrator />;
+  if (label === "trackhud") return <TrackerHud />;
   if (label === "splash") return <Splash />;
   return <App />;
 }

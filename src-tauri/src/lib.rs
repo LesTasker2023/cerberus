@@ -3,6 +3,7 @@
 //! logging, maps, clan sync) lands in later increments.
 
 mod asteroids;
+mod auctions;
 mod auth;
 mod combat;
 mod ec;
@@ -412,6 +413,12 @@ fn ec_media() -> ec::EcMedia {
     ec::media()
 }
 
+/// Auction "last calls" across every planet — the DelBoy bargain hunter.
+#[tauri::command]
+fn auction_last_calls() -> Result<Vec<auctions::Auction>, String> {
+    auctions::last_calls()
+}
+
 /// Short type code for auto-naming an unlabelled rock.
 fn short_code(category: &str) -> &'static str {
     match category {
@@ -573,6 +580,9 @@ struct OverlayStates {
     radar: bool,
     waypoints: bool,
     crosshair: bool,
+    tradecap: bool,
+    calib: bool,
+    trackhud: bool,
     dock: bool,
 }
 
@@ -589,6 +599,9 @@ fn overlay_states_of(app: &AppHandle) -> OverlayStates {
         radar: vis("radar"),
         waypoints: vis("waypoints"),
         crosshair: vis("crosshair"),
+        tradecap: vis("tradecap"),
+        calib: vis("calib"),
+        trackhud: vis("trackhud"),
         dock: vis("dock"),
     }
 }
@@ -728,7 +741,7 @@ fn clear_encounters(app: AppHandle, state: State<'_, AppState>) -> Result<(), St
 
 /// Arm/disarm the combat logger. Shows/hides the engaged HUD and, when turning
 /// off, discards any in-progress encounter.
-fn set_combat_enabled(app: &AppHandle, state: &AppState, on: bool) {
+fn set_combat_enabled(app: &AppHandle, state: &AppState, on: bool, hud: bool) {
     state.combat.enabled.store(on, Ordering::Relaxed);
     if !on {
         *state.combat.active.lock().expect("combat poisoned") = None;
@@ -736,11 +749,15 @@ fn set_combat_enabled(app: &AppHandle, state: &AppState, on: bool) {
         let _ = app.emit("encounter:update", &none);
     }
     let _ = app.emit("combat:enabled", on);
-    if let Some(w) = app.get_webview_window("combathud") {
-        if on {
-            let _ = w.show();
-        } else {
-            let _ = w.hide();
+    // Only the Mob Logger surfaces the engaged HUD; capture-only callers (the
+    // Tracker) arm recording silently.
+    if hud {
+        if let Some(w) = app.get_webview_window("combathud") {
+            if on {
+                let _ = w.show();
+            } else {
+                let _ = w.hide();
+            }
         }
     }
 }
@@ -749,14 +766,22 @@ fn set_combat_enabled(app: &AppHandle, state: &AppState, on: bool) {
 #[tauri::command]
 fn toggle_combat(app: AppHandle, state: State<'_, AppState>) -> bool {
     let now = !state.combat.enabled.load(Ordering::Relaxed);
-    set_combat_enabled(&app, state.inner(), now);
+    set_combat_enabled(&app, state.inner(), now, true);
     now
 }
 
 /// Set the combat logger to an explicit state (for the compound Mob toggle).
 #[tauri::command]
 fn set_combat(app: AppHandle, state: State<'_, AppState>, on: bool) -> bool {
-    set_combat_enabled(&app, state.inner(), on);
+    set_combat_enabled(&app, state.inner(), on, true);
+    on
+}
+
+/// Arm combat recording WITHOUT the engaged HUD — the Tracker uses this so a
+/// session records encounters silently, no overlay popping up.
+#[tauri::command]
+fn set_combat_capture(app: AppHandle, state: State<'_, AppState>, on: bool) -> bool {
+    set_combat_enabled(&app, state.inner(), on, false);
     on
 }
 
@@ -813,6 +838,12 @@ fn read_region(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 fn read_mob_region(app: AppHandle) -> Result<String, String> {
     read_window_region(&app, "mobcap")
+}
+
+/// OCR the text inside the trade capture box (the Trade tool parses this).
+#[tauri::command]
+fn read_trade_region(app: AppHandle) -> Result<String, String> {
+    read_window_region(&app, "tradecap")
 }
 
 /// All logged asteroids, newest first.
@@ -896,6 +927,16 @@ fn stop_watch(app: AppHandle, state: State<'_, AppState>) -> WatchStatus {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Single-instance guard MUST be the first plugin. When a second launch
+        // is attempted (the app closes to tray, so re-running the exe would
+        // otherwise spawn a duplicate), focus the existing window instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -909,6 +950,7 @@ pub fn run() {
 
             let cap_path = dir.join("capregion.json");
             let mob_cap_path = dir.join("mobcap.json");
+            let trade_cap_path = dir.join("tradecap.json");
             app.manage(AppState {
                 settings_path,
                 settings: Mutex::new(settings),
@@ -953,7 +995,11 @@ pub fn run() {
 
             // Restore both capture boxes to their last position/size and keep
             // them persisted as the user drags/resizes.
-            for (label, path) in [("capregion", cap_path), ("mobcap", mob_cap_path)] {
+            for (label, path) in [
+                ("capregion", cap_path),
+                ("mobcap", mob_cap_path),
+                ("tradecap", trade_cap_path),
+            ] {
                 if let Some(win) = app.get_webview_window(label) {
                     if let Some(g) = load_cap_geom(&path) {
                         let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
@@ -1095,6 +1141,7 @@ pub fn run() {
             nexus_refresh,
             ec_avatar,
             ec_media,
+            auction_last_calls,
             toggle_panel,
             toggle_capregion,
             toggle_radar,
@@ -1104,11 +1151,13 @@ pub fn run() {
             get_broadcast,
             set_overlay,
             set_combat,
+            set_combat_capture,
             overlay_states,
             hide_window,
             finish_splash,
             read_region,
             read_mob_region,
+            read_trade_region,
             list_encounters,
             current_encounter,
             delete_encounter,

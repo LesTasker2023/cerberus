@@ -149,7 +149,67 @@ fn recognize(bgra: &[u8], w: i32, h: i32) -> Result<String, String> {
         let bmp = SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, cw, ch)?;
         let engine = OcrEngine::TryCreateFromUserProfileLanguages()?;
         let result = engine.RecognizeAsync(&bmp)?.get()?;
-        Ok(result.Text()?.to_string())
+
+        // The engine's own line grouping splits wide two-column layouts (e.g. the
+        // trade window's "name … value") into separate lines. Rebuild true visual
+        // rows from each word's bounding box: cluster by vertical centre, then
+        // order left→right. This rejoins name + value on one line.
+        struct W {
+            text: String,
+            x: f32,
+            cy: f32,
+            h: f32,
+        }
+        let mut words: Vec<W> = Vec::new();
+        let lines = result.Lines()?;
+        for i in 0..lines.Size()? {
+            let line = lines.GetAt(i)?;
+            let ws = line.Words()?;
+            for j in 0..ws.Size()? {
+                let word = ws.GetAt(j)?;
+                let r = word.BoundingRect()?;
+                words.push(W {
+                    text: word.Text()?.to_string(),
+                    x: r.X,
+                    cy: r.Y + r.Height / 2.0,
+                    h: r.Height,
+                });
+            }
+        }
+        if words.is_empty() {
+            return Ok(result.Text()?.to_string());
+        }
+
+        let cmp = |a: &f32, b: &f32| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+        // Row threshold = ~0.6× the median glyph height.
+        let mut heights: Vec<f32> = words.iter().map(|w| w.h).collect();
+        heights.sort_by(cmp);
+        let thr = heights[heights.len() / 2] * 0.6;
+
+        // Sort top→bottom, then cluster consecutive words into rows.
+        words.sort_by(|a, b| cmp(&a.cy, &b.cy).then(cmp(&a.x, &b.x)));
+        let mut rows: Vec<Vec<W>> = Vec::new();
+        let (mut sum, mut n) = (0.0f32, 0.0f32);
+        for w in words {
+            let same = matches!(rows.last(), Some(_) if (w.cy - sum / n).abs() <= thr);
+            if !same {
+                rows.push(Vec::new());
+                sum = 0.0;
+                n = 0.0;
+            }
+            sum += w.cy;
+            n += 1.0;
+            rows.last_mut().unwrap().push(w);
+        }
+
+        let mut out = String::new();
+        for row in &mut rows {
+            row.sort_by(|a, b| cmp(&a.x, &b.x));
+            let joined: Vec<&str> = row.iter().map(|w| w.text.as_str()).collect();
+            out.push_str(&joined.join(" "));
+            out.push('\n');
+        }
+        Ok(out)
     })()
     .map_err(|e| e.to_string())
 }

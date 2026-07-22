@@ -10,6 +10,7 @@ interface OverlayStates {
   radar: boolean;
   waypoints: boolean;
   crosshair: boolean;
+  calib: boolean;
   dock: boolean;
 }
 
@@ -29,6 +30,7 @@ export function Dock() {
     radar: false,
     waypoints: false,
     crosshair: false,
+    calib: false,
     dock: true,
   });
   const [combat, setCombat] = useState(false);
@@ -101,6 +103,13 @@ export function Dock() {
           title="Crosshair overlay — offset in Config"
         >
           <IconCross />
+        </button>
+        <button
+          className={`dockbtn ${st.calib ? "dockbtn--on" : ""}`}
+          onClick={() => setOverlay("calib", !st.calib)}
+          title="Range calibrator — dial in the reticle offset"
+        >
+          <IconCalib />
         </button>
 
         <div className="dock__grip" data-tauri-drag-region title="Drag">
@@ -178,6 +187,16 @@ function IconCross() {
       <path d={HEX} />
       <circle cx="12" cy="12" r="4.2" />
       <path d="M12 5.4v2.2M12 16.4v2.2M5.4 12h2.2M16.4 12h2.2" />
+    </svg>
+  );
+}
+
+function IconCalib() {
+  return (
+    <svg {...S}>
+      <path d={HEX} />
+      <path d="M7 15.5 17 8.5" />
+      <path d="M7 15.5v-3M10 13.4v-3M13 11.3v-3" opacity="0.7" />
     </svg>
   );
 }

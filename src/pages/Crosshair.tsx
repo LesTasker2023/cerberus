@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
-import { DEFAULT_CROSSHAIR, loadCrosshair, type CrosshairConfig } from "../lib/crosshair";
+import { DEFAULT_CROSSHAIR, loadCrosshair, rangeOffset, type CrosshairConfig } from "../lib/crosshair";
 
 /** Full-screen, click-through crosshair overlay. Draws a reticle at screen
  *  centre plus an adjustable offset — a passive visual aid to compensate for the
@@ -32,9 +32,10 @@ export function Crosshair() {
 
   const { offsetX, offsetY, size, gap, thickness, color, dot, ring, ringRadius } = cfg;
   const ext = Math.max(size, ring ? ringRadius : 0) + thickness + 2;
+  const y = offsetY + rangeOffset(cfg);
   return (
     <div className="xhair">
-      <div className="xhair__wrap" style={{ transform: `translate(${offsetX}px, ${offsetY}px)` }}>
+      <div className="xhair__wrap" style={{ transform: `translate(${offsetX}px, ${y}px)` }}>
         <svg width={ext * 2} height={ext * 2} viewBox={`${-ext} ${-ext} ${ext * 2} ${ext * 2}`}>
           {ring && (
             <circle cx={0} cy={0} r={ringRadius} fill="none" stroke={color} strokeWidth={thickness} />

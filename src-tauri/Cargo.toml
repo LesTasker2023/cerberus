@@ -1,6 +1,6 @@
 [package]
 name = "cerberus"
-version = "0.4.1"
+version = "0.5.0"
 description = "Cerberus — Entropia Universe space PVP clan tool"
 authors = ["les-t"]
 edition = "2021"
@@ -21,6 +21,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Single-instance guard: relaunching the exe (it closes to tray) focuses the
+# running window instead of spawning a second process.
+tauri-plugin-single-instance = "2"
 # Serves the built frontend over http://localhost:<port> in release so embeds
 # that require a localhost/HTTPS origin (Twitch) work (Tauri otherwise serves
 # from http://tauri.localhost, which Twitch's player refuses).
@@ -42,6 +45,7 @@ tungstenite = { version = "0.24", features = ["native-tls"] }
 winapi = { version = "0.3", features = ["winuser", "wingdi", "combaseapi", "objbase"] }
 windows = { version = "0.58", features = [
   "Foundation",
+  "Foundation_Collections",
   "Globalization",
   "Graphics_Imaging",
   "Media_Ocr",

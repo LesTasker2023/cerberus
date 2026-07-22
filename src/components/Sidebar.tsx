@@ -11,6 +11,10 @@ export type Page =
   | "codex"
   | "media"
   | "clan"
+  | "delboy"
+  | "arb"
+  | "trade"
+  | "tracker"
   | "profile"
   | "settings";
 
@@ -45,6 +49,8 @@ export function Sidebar({
       items: [
         { page: "feed", label: "Feed", icon: <IconFeed />, live: watching },
         { page: "clan", label: "Clan Sync", icon: <IconClan /> },
+        { page: "delboy", label: "DelBoy", icon: <IconGavel /> },
+        { page: "arb", label: "Arb Board", icon: <IconArb /> },
         { page: "media", label: "Media", icon: <IconMedia /> },
       ],
     },
@@ -61,6 +67,8 @@ export function Sidebar({
       items: [
         { page: "rocks", label: "Rock Logger", icon: <IconRocks /> },
         { page: "combat", label: "Mob Logger", icon: <IconCombat /> },
+        { page: "trade", label: "Trade", icon: <IconDollar /> },
+        { page: "tracker", label: "Tracker", icon: <IconTracker /> },
       ],
     },
     { label: "System", items: [{ page: "settings", label: "Config", icon: <IconConfig /> }] },
@@ -199,6 +207,42 @@ function IconCodex() {
     <svg {...S}>
       <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v14H6a2 2 0 0 0-2 2z" />
       <path d="M8 8h7M8 11h7" opacity="0.6" />
+    </svg>
+  );
+}
+function IconTracker() {
+  return (
+    <svg {...S}>
+      <path d="M3.5 14.5l4-5 3.5 3.5 4-6 2.5 3.5h3" />
+      <circle cx="7.5" cy="9.5" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="7" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconDollar() {
+  return (
+    <svg {...S}>
+      <path d="M12 3v18" />
+      <path d="M16 7.2c-1-1.3-2.5-1.8-4-1.8-2 0-3.6 1-3.6 2.9 0 4.2 8 2 8 6.2 0 2-1.8 3-4.2 3-1.7 0-3.3-.6-4.2-2" />
+    </svg>
+  );
+}
+function IconArb() {
+  return (
+    <svg {...S}>
+      <path d="M7 7h11l-3-3M17 17H6l3 3" />
+      <circle cx="5.5" cy="7" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="18.5" cy="17" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconGavel() {
+  return (
+    <svg {...S}>
+      <path d="M9 11 4 16a1.6 1.6 0 0 0 2.3 2.3l5-5" />
+      <path d="M8.5 8.5 14 14M11.5 5.5 17 11" />
+      <path d="M13 3.5 20.5 11" />
+      <path d="M4 21h8" />
     </svg>
   );
 }

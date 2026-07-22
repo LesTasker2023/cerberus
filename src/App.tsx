@@ -13,6 +13,10 @@ import { MapView } from "./pages/MapView";
 import { Codex } from "./pages/Codex";
 import { Media } from "./pages/Media";
 import { ClanFeed } from "./pages/ClanFeed";
+import { DelBoy } from "./pages/DelBoy";
+import { ArbBoard } from "./pages/ArbBoard";
+import { Trade } from "./pages/Trade";
+import { Tracker } from "./pages/Tracker";
 import { Profile } from "./pages/Profile";
 import { Settings } from "./pages/Settings";
 import { Login } from "./pages/Login";
@@ -170,6 +174,10 @@ export default function App() {
     codex: "Database",
     media: "Media",
     clan: "Clan Sync",
+    delboy: "DelBoy",
+    arb: "Arb Board",
+    trade: "Trade",
+    tracker: "Tracker",
     profile: "Player Profile",
     settings: "Config",
   };
@@ -231,6 +239,10 @@ export default function App() {
           {page === "codex" && <Codex />}
           {page === "media" && <Media />}
           {page === "clan" && <ClanFeed pilot={auth.session?.display_name} />}
+          {page === "delboy" && <DelBoy />}
+          {page === "arb" && <ArbBoard />}
+          {page === "trade" && <Trade />}
+          {page === "tracker" && <Tracker />}
           {page === "profile" && (
             <Profile
               session={auth.session}
