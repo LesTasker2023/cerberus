@@ -23,6 +23,7 @@ import { Login } from "./pages/Login";
 import { useAuth, isAuthed } from "./hooks/useAuth";
 import { useLogWatch } from "./hooks/useLogWatch";
 import { useTrackerSession } from "./hooks/useTrackerSession";
+import { useChatTriggers } from "./hooks/useChatTriggers";
 import { useEcIntel } from "./hooks/useEcIntel";
 import { useAsteroids } from "./hooks/useAsteroids";
 import { useEncounters } from "./hooks/useEncounters";
@@ -48,6 +49,8 @@ export default function App() {
   // Owned at the root so a hunt survives page changes (the Tracker page is
   // conditionally rendered, so state living inside it would be destroyed).
   const tracker = useTrackerSession();
+  // Chat triggers also live at the root so alerts fire from any page.
+  const triggers = useChatTriggers();
   const [page, setPage] = useState<Page>("home");
   /** Entity the Database should open on arrival (set by "view in Database" links). */
   const [codexUrl, setCodexUrl] = useState<string | null>(null);
@@ -231,7 +234,7 @@ export default function App() {
 
         <main className="content">
           {page === "home" && <Dashboard ec={ec} />}
-          {page === "feed" && <Feed watch={watch} />}
+          {page === "feed" && <Feed watch={watch} triggers={triggers} />}
           {page === "rocks" && <Asteroids store={rocks} />}
           {page === "combat" && <Combat store={encounters} />}
           {page === "bestiary" && <MobDb store={encounters} />}

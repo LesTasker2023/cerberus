@@ -2,7 +2,8 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main", "panel", "capregion", "mobcap", "radar", "dock", "waypoints", "combathud", "crosshair", "tradecap", "calib", "trackhud", "splash"],
+  "windows": ["main", "panel", "capregion", "mobcap", "radar", "dock", "waypoints", "combathud", "crosshair", "tradecap", "calib", "trackhud",
+    "alerts", "splash"],
   "permissions": [
     "core:default",
     "opener:default",

@@ -177,6 +177,195 @@ fn check_log_path(path: Option<String>, state: State<'_, AppState>) -> LogCheck 
     }
 }
 
+/// One channel seen in the log, with how much traffic it carried.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelStat {
+    name: String,
+    count: u64,
+    first_at: String,
+    last_at: String,
+}
+
+/// Result of a full-history scan.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryScan {
+    /// Every non-System channel ever seen, busiest first.
+    channels: Vec<ChannelStat>,
+    /// The most recent chat lines only — bounded, for rendering.
+    lines: Vec<watcher::LogLine>,
+    total_lines: u64,
+    chat_lines: u64,
+    bytes: u64,
+    path: String,
+}
+
+/// DEV TOOL — scan the whole chat.log to discover every channel ever seen.
+///
+/// Streams the file line by line, so memory stays flat no matter how large it
+/// has grown; only a rolling window of the last `sample` chat lines is retained
+/// for display (returning every line would be unbounded). Lines are parsed with
+/// the same `watcher::parse_line` the live tail uses, so scanned output can
+/// never drift from live output. Read-only.
+#[tauri::command]
+fn scan_log_history(sample: usize, state: State<'_, AppState>) -> Result<HistoryScan, String> {
+    use std::collections::{HashMap, VecDeque};
+    use std::io::{BufRead, BufReader};
+
+    let path = resolve_log_path(&state)?;
+    let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let mut reader = BufReader::new(file);
+
+    struct Acc {
+        count: u64,
+        first: String,
+        last: String,
+    }
+    let mut chans: HashMap<String, Acc> = HashMap::new();
+    let mut recent: VecDeque<watcher::LogLine> = VecDeque::new();
+    let (mut total, mut chat) = (0u64, 0u64);
+
+    // Byte-oriented so a stray non-UTF8 line can't abort the scan.
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        let raw = String::from_utf8_lossy(&buf);
+        let raw = raw.trim_end_matches(['\r', '\n']);
+        if raw.trim().is_empty() {
+            continue;
+        }
+        total += 1;
+
+        let parsed = watcher::parse_line(raw);
+        let Some(ch) = parsed.channel.clone() else {
+            continue;
+        };
+        if ch.eq_ignore_ascii_case("system") {
+            continue;
+        }
+        chat += 1;
+
+        chans
+            .entry(ch)
+            .and_modify(|a| {
+                a.count += 1;
+                a.last = parsed.at.clone();
+            })
+            .or_insert_with(|| Acc {
+                count: 1,
+                first: parsed.at.clone(),
+                last: parsed.at.clone(),
+            });
+
+        recent.push_back(parsed);
+        if recent.len() > sample {
+            recent.pop_front();
+        }
+    }
+
+    let mut channels: Vec<ChannelStat> = chans
+        .into_iter()
+        .map(|(name, a)| ChannelStat {
+            name,
+            count: a.count,
+            first_at: a.first,
+            last_at: a.last,
+        })
+        .collect();
+    channels.sort_by(|a, b| b.count.cmp(&a.count));
+
+    Ok(HistoryScan {
+        channels,
+        lines: recent.into(),
+        total_lines: total,
+        chat_lines: chat,
+        bytes,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Pop a URL into its own bare window.
+///
+/// This is how Twitch works in a packaged build: an iframe embed must pass
+/// `parent=<host>`, and Tauri's production custom protocol (`tauri.localhost`)
+/// is not an origin Twitch accepts — so the embed that works in dev fails once
+/// shipped. Navigating a separate window to the site makes it a top-level
+/// document, where the parent rule does not apply at all.
+///
+/// Re-focuses an existing window with the same label instead of spawning a
+/// duplicate, so clicking the same stream twice does the obvious thing.
+///
+/// MUST stay `async`. A synchronous command runs on the main thread, and
+/// building a window there deadlocks on Windows because window creation needs
+/// the very event loop the command is blocking — which surfaces as a white,
+/// never-painted window that wedges the shared WebView2 environment and takes
+/// the app's other webviews down with it. An async command runs off the main
+/// thread, so the builder can drive the event loop normally.
+#[tauri::command]
+async fn open_stream(
+    app: AppHandle,
+    label: String,
+    url: String,
+    title: String,
+    always_on_top: Option<bool>,
+    width: Option<f64>,
+    height: Option<f64>,
+    decorations: Option<bool>,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+
+    let parsed = tauri::Url::parse(&url).map_err(|e| e.to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("refusing non-web url: {url}"));
+    }
+
+    let built = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed))
+        .title(title)
+        .inner_size(width.unwrap_or(1000.0), height.unwrap_or(620.0))
+        .min_inner_size(320.0, 200.0)
+        .resizable(true)
+        .focused(true)
+        .decorations(decorations.unwrap_or(true))
+        .always_on_top(always_on_top.unwrap_or(false))
+        .build();
+
+    match built {
+        Ok(_) => Ok(()),
+        // Never leave the user with nothing — hand it to the system browser.
+        Err(e) => app
+            .opener()
+            .open_url(&url, None::<&str>)
+            .map_err(|_| e.to_string()),
+    }
+}
+
+/// Open a URL in the system browser. The escape hatch when an in-app window
+/// misbehaves — and the safest way to view a heavy site like Twitch.
+#[tauri::command]
+fn open_external(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let parsed = tauri::Url::parse(&url).map_err(|e| e.to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("refusing non-web url: {url}"));
+    }
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Start tailing the chat.log. Uses `path`, else the configured path, else auto-detect.
 #[tauri::command]
 fn start_watch(
@@ -585,6 +774,7 @@ struct OverlayStates {
     tradecap: bool,
     calib: bool,
     trackhud: bool,
+    alerts: bool,
     dock: bool,
 }
 
@@ -604,6 +794,7 @@ fn overlay_states_of(app: &AppHandle) -> OverlayStates {
         tradecap: vis("tradecap"),
         calib: vis("calib"),
         trackhud: vis("trackhud"),
+        alerts: vis("alerts"),
         dock: vis("dock"),
     }
 }
@@ -1129,6 +1320,9 @@ pub fn run() {
             check_log_path,
             start_watch,
             watch_status,
+            scan_log_history,
+            open_stream,
+            open_external,
             session_list,
             session_current,
             session_save,

@@ -12,6 +12,7 @@ interface OverlayStates {
   waypoints: boolean;
   crosshair: boolean;
   calib: boolean;
+  alerts: boolean;
   dock: boolean;
 }
 
@@ -32,6 +33,7 @@ export function Dock() {
     waypoints: false,
     crosshair: false,
     calib: false,
+    alerts: false,
     dock: true,
   });
   const [combat, setCombat] = useState(false);
@@ -116,6 +118,13 @@ export function Dock() {
             <IconCalib />
           </button>
         )}
+        <button
+          className={`dockbtn ${st.alerts ? "dockbtn--on" : ""}`}
+          onClick={() => setOverlay("alerts", !st.alerts)}
+          title="Chat alerts — trigger hits pop up in-game"
+        >
+          <IconAlert />
+        </button>
 
         <div className="dock__grip" data-tauri-drag-region title="Drag">
           ⠿
@@ -202,6 +211,16 @@ function IconCalib() {
       <path d={HEX} />
       <path d="M7 15.5 17 8.5" />
       <path d="M7 15.5v-3M10 13.4v-3M13 11.3v-3" opacity="0.7" />
+    </svg>
+  );
+}
+
+function IconAlert() {
+  return (
+    <svg {...S}>
+      <path d={HEX} />
+      <path d="M9.2 15.2h5.6M12 7.4a3 3 0 0 0-3 3c0 2.2-.7 3.4-1.2 4.1h8.4c-.5-.7-1.2-1.9-1.2-4.1a3 3 0 0 0-3-3Z" />
+      <path d="M11 17.2h2" opacity="0.7" />
     </svg>
   );
 }

@@ -375,6 +375,14 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
 }
+/* The feed is a bare log tail — lines render straight onto the window, with no
+   card chrome boxing them in. */
+.main .content > .feed {
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
 
 /* ── Buttons ── */
 .btn {
@@ -423,10 +431,480 @@ body {
 
 /* ── Feed ── */
 .feed {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
+}
+
+/* Channel label on each feed row */
+.row__chan {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+/* ── Channel palette. Slots are assigned by hashing the channel name, so a
+   channel keeps its colour across launches with no stored state; overrides
+   live in cerberus.channelColors. Chosen for separation on the dark bg. ── */
+.chanc-0 { color: #e06c75; }
+.chanc-1 { color: #d19a66; }
+.chanc-2 { color: #e5c07b; }
+.chanc-3 { color: #98c379; }
+.chanc-4 { color: #56b6c2; }
+.chanc-5 { color: #61afef; }
+.chanc-6 { color: #c678dd; }
+.chanc-7 { color: #ff8b6b; }
+.chanc-8 { color: #9ece6a; }
+.chanc-9 { color: #7dcfff; }
+.chanc-10 { color: #bb9af7; }
+.chanc-11 { color: #f7768e; }
+
+.tabed__swatch {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: currentColor;
+  cursor: pointer;
+}
+.tabed__swatch:hover {
+  outline: 2px solid var(--line);
+  outline-offset: 1px;
+}
+
+/* ── Channel tabs ── */
+.chantabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 8px 10px;
+}
+.chantabs__spacer {
+  flex: 1 1 auto;
+}
+.chantabs .feed__search {
+  flex: 0 1 260px;
+  padding: 0;
+}
+.chantab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    color 0.14s,
+    border-color 0.14s,
+    background 0.14s;
+}
+.chantab:hover {
+  color: var(--text);
+  border-color: var(--line-strong, var(--accent));
+}
+.chantab--on {
+  color: var(--text);
+  background: var(--bg-2);
+  border-color: var(--accent);
+}
+.chantab__n {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.chantab__dots {
+  display: inline-flex;
+  gap: 2px;
+}
+.chantab__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.chantab--add {
+  padding: 4px 10px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--faint);
+}
+
+/* ── Channel-tab editor ── */
+.tabed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  min-height: 0;
+}
+.tabed__empty {
+  margin: 0;
+  padding: 18px 4px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--faint);
+}
+.tabed__filter {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  outline: none;
+}
+.tabed__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 2px 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.tabed__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  font-size: 12.5px;
+  color: var(--text);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.tabed__row:hover {
+  background: var(--bg-2);
+}
+.tabed__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.tabed__count {
+  flex: 1 1 auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* ── Chat triggers ── */
+.trigbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 8px 8px;
+  padding: 7px 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+}
+.trigbar__hint {
+  font-size: 12px;
+  color: var(--faint);
+}
+.trigbar__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.trigchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--faint);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.trigchip--on {
+  color: var(--text);
+  border-color: var(--accent);
+  opacity: 1;
+}
+.trigchip__n {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.trig__lbl {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.trig__terms {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  outline: none;
+  resize: vertical;
+}
+.row--alert {
+  background: rgba(207, 59, 45, 0.06);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.row__trig {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-right: 8px;
+}
+
+/* ── In-game alert overlay ── */
+.alerts {
+  /* Inset from the window edge so the attention shake has room to travel
+     without clipping against the bounds. */
+  height: calc(100vh - 12px);
+  margin: 6px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(13, 15, 18, 0.9);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  font-family: var(--font);
+}
+
+/* Attention grab on a new alert: a short wobble plus an accent flash. */
+@keyframes alertshake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  12% {
+    transform: translateX(-5px);
+  }
+  28% {
+    transform: translateX(5px);
+  }
+  44% {
+    transform: translateX(-4px);
+  }
+  60% {
+    transform: translateX(3px);
+  }
+  78% {
+    transform: translateX(-2px);
+  }
+  90% {
+    transform: translateX(1px);
+  }
+}
+.alerts--shake {
+  animation: alertshake 0.48s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(207, 59, 45, 0.35);
+}
+@media (prefers-reduced-motion: reduce) {
+  .alerts--shake {
+    animation: none;
+  }
+}
+.alerts__snd {
+  background: none;
+  border: none;
+  color: var(--faint);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.alerts__snd--on {
+  color: var(--accent);
+}
+.alerts__snd:hover {
+  color: var(--text);
+}
+.alerts__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  cursor: move;
+}
+.alerts__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.alerts__title {
+  flex: 1 1 auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: var(--muted);
+}
+.alerts__clr,
+.alerts__x {
+  background: none;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 11px;
+}
+.alerts__x {
+  font-size: 16px;
+  line-height: 1;
+}
+.alerts__clr:hover,
+.alerts__x:hover {
+  color: var(--text);
+}
+.alerts__list {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.alerts__idle {
+  margin: auto;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.alert {
+  padding: 6px 9px;
+  background: var(--bg-2);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--r-sm);
+  animation: rowin 0.16s ease-out;
+}
+.alert__top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.alert__trig {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.alert__chan {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+.alert__body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.alert__who {
+  color: var(--muted);
+  margin-right: 6px;
+}
+.alert__who::after {
+  content: ":";
+}
+
+/* ── DEV ONLY: chat.log history scan (channel discovery). Stripped from
+   production builds by `import.meta.env.DEV`. ── */
+.devscan__btn {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 5;
+  padding: 5px 11px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  background: var(--bg-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+  cursor: pointer;
+  opacity: 0.75;
+}
+.devscan__btn:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--text);
+  border-color: var(--accent);
+}
+.devscan__btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.devscan__bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+}
+.devscan__lbl {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.devscan__chans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  flex: 1 1 auto;
+}
+.devscan__chan {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.devscan__chan b {
+  color: var(--faint);
+  font-weight: 600;
 }
 
 /* ── Item tags (Nexus enrichment) ── */
@@ -484,8 +962,7 @@ body {
 .feed__search {
   position: relative;
   flex: 0 0 auto;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--line);
+  padding: 0 8px 10px;
 }
 .feed__search input {
   width: 100%;
@@ -597,7 +1074,7 @@ body {
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 14px 16px;
+  padding: 0 0 16px;
   font-family: var(--mono);
   /* Feed lines are copyable (the rest of the app is native-style non-select). */
   user-select: text;
@@ -629,7 +1106,7 @@ body {
 /* Feed rows */
 .row {
   display: grid;
-  grid-template-columns: 62px 92px 1fr;
+  grid-template-columns: 62px 104px 1fr;
   gap: 14px;
   align-items: baseline;
   padding: 3px 8px;
@@ -655,16 +1132,6 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.row__chan {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .row__body {
   color: #c3c9d2;
@@ -3812,10 +4279,38 @@ html.win-transparent #root {
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 12px;
 }
+.streamc__ext {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text);
+  background: rgba(13, 15, 18, 0.72);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.streamc:hover .streamc__ext,
+.streamc__ext:focus-visible {
+  opacity: 1;
+}
+.streamc__ext:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .streamc {
   display: flex;
   flex-direction: column;
   text-align: left;
+  cursor: pointer;
   padding: 0 0 10px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);

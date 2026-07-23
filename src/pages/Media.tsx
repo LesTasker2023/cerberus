@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { decode } from "../lib/feed";
 import {
   ecMedia,
@@ -10,15 +11,54 @@ import {
   type EcNews,
 } from "../lib/ecMedia";
 
-type Embed =
-  | { kind: "twitch"; id: string; title: string }
-  | { kind: "youtube"; id: string; title: string };
+type Embed = { kind: "youtube"; id: string; title: string };
+
+/**
+ * Pop a Twitch channel into its own window.
+ *
+ * Not an in-app iframe: Twitch requires `parent=<host>` on embeds, and Tauri's
+ * production custom protocol is not an origin it accepts — so an embed that
+ * works in dev silently fails once packaged. A dedicated window navigates to
+ * Twitch as a top-level document, where that restriction doesn't apply.
+ */
+/**
+ * The bare player — no nav, no chat, no page chrome, just the video.
+ *
+ * `parent` is only enforced when the player is inside an iframe (Twitch checks
+ * the ancestor origin). Loaded top-level in its own window there is no ancestor,
+ * so the check doesn't apply and the packaged app is unaffected.
+ */
+function playerUrl(login: string) {
+  return `https://player.twitch.tv/?channel=${encodeURIComponent(login)}&parent=twitch.tv`;
+}
+
+/** The full site, for when you want chat too. */
+function channelUrl(login: string) {
+  return `https://www.twitch.tv/${login}`;
+}
+
+/** Force the system browser — the guaranteed path if the in-app window misbehaves. */
+function openInBrowser(login: string) {
+  invoke("open_external", { url: channelUrl(login) }).catch(() => {});
+}
+
+/** Pop the video into a small always-on-top window — picture-in-picture over the game. */
+function popStream(login: string, title: string) {
+  invoke("open_stream", {
+    label: `stream-${login.toLowerCase().replace(/[^a-z0-9_-]/g, "")}`,
+    url: playerUrl(login),
+    title: `${title} — Twitch`,
+    alwaysOnTop: true,
+    width: 512,
+    height: 288, // 16:9
+  }).catch(() => openInBrowser(login));
+}
 
 /**
  * Media — the community/recon surface. Live Twitch broadcasts (the thumbnail is
  * a near-live peek at a player's screen — coords, what they're doing), recent
- * videos, and Steam patch news. Streams/videos open in an in-app embed, no
- * browser. Polled every 60s.
+ * videos, and Steam patch news. Twitch streams pop into their own window (see
+ * `popStream`); YouTube videos open in an in-app embed. Polled every 60s.
  */
 export function Media() {
   const [media, setMedia] = useState<EcMedia | null>(null);
@@ -68,7 +108,7 @@ export function Media() {
         ) : (
           <div className="streamgrid">
             {streams.map((s) => (
-              <StreamCard key={s.user_login} s={s} onPlay={() => setEmbed({ kind: "twitch", id: s.user_login, title: s.user_name })} />
+              <StreamCard key={s.user_login} s={s} onPlay={() => popStream(s.user_login, s.user_name)} />
             ))}
           </div>
         )}
@@ -113,7 +153,18 @@ export function Media() {
 
 function StreamCard({ s, onPlay }: { s: EcStream; onPlay: () => void }) {
   return (
-    <button className="streamc" onClick={onPlay}>
+    <div
+      className="streamc"
+      role="button"
+      tabIndex={0}
+      onClick={onPlay}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPlay();
+        }
+      }}
+    >
       <span className="streamc__thumb">
         <img src={s.thumbnail} alt="" loading="lazy" />
         <span className="streamc__badge">
@@ -123,13 +174,24 @@ function StreamCard({ s, onPlay }: { s: EcStream; onPlay: () => void }) {
         <span className="streamc__play" aria-hidden>
           ▶
         </span>
+        <button
+          className="streamc__ext"
+          title="Open in your browser instead"
+          aria-label={`Open ${s.user_name} in browser`}
+          onClick={(e) => {
+            e.stopPropagation();
+            openInBrowser(s.user_login);
+          }}
+        >
+          ↗
+        </button>
       </span>
       <span className="streamc__name">{s.user_name}</span>
       <span className="streamc__title" title={s.title}>
         {s.title}
       </span>
       <span className="streamc__up">{uptime(s.started_at)}</span>
-    </button>
+    </div>
   );
 }
 
@@ -164,11 +226,10 @@ function NewsRow({ n }: { n: EcNews }) {
   );
 }
 
+/** YouTube keeps the in-app embed — unlike Twitch it imposes no `parent`
+ *  origin check, so it works the same packaged as it does in dev. */
 function EmbedModal({ embed, onClose }: { embed: Embed; onClose: () => void }) {
-  const src =
-    embed.kind === "twitch"
-      ? `https://player.twitch.tv/?channel=${embed.id}&parent=localhost&parent=tauri.localhost&muted=false`
-      : `https://www.youtube-nocookie.com/embed/${embed.id}?autoplay=1`;
+  const src = `https://www.youtube-nocookie.com/embed/${embed.id}?autoplay=1`;
   return (
     <div className="embed" onClick={onClose}>
       <div className="embed__box" onClick={(e) => e.stopPropagation()}>
