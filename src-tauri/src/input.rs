@@ -95,7 +95,52 @@ pub fn send_position_key() {
     }
 }
 
+/// Set-1 hardware scancodes for the keys the accessibility tools drive. The UI
+/// passes scancodes as raw numbers, so some of these are reference-only.
+#[allow(dead_code)]
+pub mod sc {
+    pub const ESC: u16 = 0x01;
+    pub const F: u16 = 0x21;
+    pub const W: u16 = 0x11;
+    pub const A: u16 = 0x1E;
+    pub const S: u16 = 0x1F;
+    pub const D: u16 = 0x20;
+    pub const Z: u16 = 0x2C;
+    pub const C: u16 = 0x2E;
+}
+
+/// Press one key by hardware scancode with a real down → hold → up. Same
+/// reasoning as `send_position_key`: CryEngine reads scancodes (not virtual
+/// keys), and the hold must span a game frame or the press is dropped.
+#[cfg(windows)]
+pub fn press_key(scan: u16, hold_ms: u64) {
+    use winapi::um::winuser::{
+        SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
+    };
+
+    unsafe fn key(scan: u16, up: bool) -> INPUT {
+        let mut input: INPUT = std::mem::zeroed();
+        input.type_ = INPUT_KEYBOARD;
+        let ki: &mut KEYBDINPUT = input.u.ki_mut();
+        ki.wVk = 0;
+        ki.wScan = scan;
+        ki.dwFlags = KEYEVENTF_SCANCODE | if up { KEYEVENTF_KEYUP } else { 0 };
+        input
+    }
+
+    unsafe {
+        let size = std::mem::size_of::<INPUT>() as i32;
+        let mut down = [key(scan, false)];
+        SendInput(1, down.as_mut_ptr(), size);
+        std::thread::sleep(std::time::Duration::from_millis(hold_ms.max(1)));
+        let mut up = [key(scan, true)];
+        SendInput(1, up.as_mut_ptr(), size);
+    }
+}
+
 // ── Non-Windows stubs ──
+#[cfg(not(windows))]
+pub fn press_key(_scan: u16, _hold_ms: u64) {}
 #[cfg(not(windows))]
 pub fn focus_entropia() -> bool {
     false

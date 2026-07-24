@@ -14,13 +14,14 @@ import { TradeCapture } from "./pages/TradeCapture";
 import { Calibrator } from "./pages/Calibrator";
 import { TrackerHud } from "./pages/TrackerHud";
 import { AlertToast } from "./pages/AlertToast";
+import { EmRegion } from "./pages/EmRegion";
 import { Splash } from "./pages/Splash";
 import "./styles.css";
 
 // One frontend, several windows — branch on the window label.
 const label = getCurrentWindow().label;
 if (
-  ["capregion", "mobcap", "panel", "radar", "dock", "waypoints", "combathud", "crosshair", "tradecap", "calib", "trackhud", "alerts", "splash"].includes(
+  ["capregion", "mobcap", "panel", "radar", "dock", "waypoints", "combathud", "crosshair", "tradecap", "calib", "trackhud", "alerts", "emregion", "splash"].includes(
     label,
   )
 ) {
@@ -40,6 +41,7 @@ function root() {
   if (label === "calib") return <Calibrator />;
   if (label === "trackhud") return <TrackerHud />;
   if (label === "alerts") return <AlertToast />;
+  if (label === "emregion") return <EmRegion />;
   if (label === "splash") return <Splash />;
   return <App />;
 }

@@ -7,6 +7,7 @@ mod auctions;
 mod auth;
 mod combat;
 mod ec;
+mod em;
 mod input;
 mod nexus;
 mod ocr;
@@ -66,6 +67,10 @@ struct AppState {
     sessions: sessions::SessionStore,
     /// Discord login + clan-membership gate.
     auth: auth::AuthState,
+    /// EM accessibility assist loop.
+    em: std::sync::Arc<em::EmState>,
+    /// Last EM config, so any window (topbar, dock) can arm without re-sending it.
+    em_config: Mutex<Option<em::EmConfig>>,
 }
 
 /// Persisted position + size of the OCR capture box.
@@ -364,6 +369,81 @@ fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(&url, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+/* ── EM accessibility assist ── */
+
+/// Minimap circle geometry, derived from the framing overlay window.
+#[derive(Serialize)]
+struct EmRegion {
+    cx: i32,
+    cy: i32,
+    radius: i32,
+}
+
+/// Read the `emregion` framing window's screen rect and reduce it to a centre +
+/// radius (the inscribed circle), so the UI can build the EM config.
+#[tauri::command]
+fn em_region_geom(app: AppHandle) -> Option<EmRegion> {
+    let w = app.get_webview_window("emregion")?;
+    let pos = w.outer_position().ok()?;
+    let size = w.outer_size().ok()?;
+    Some(EmRegion {
+        cx: pos.x + size.width as i32 / 2,
+        cy: pos.y + size.height as i32 / 2,
+        radius: (size.width.min(size.height) as i32) / 2,
+    })
+}
+
+/// Store the EM config without arming — so the topbar/dock toggles can start it
+/// later with no config of their own. Also updates `em_config` on every arm.
+#[tauri::command]
+fn em_set_config(state: State<'_, AppState>, config: em::EmConfig) {
+    *state.em_config.lock().expect("em config poisoned") = Some(config);
+}
+
+/// Whether an EM config has been stored (i.e. the minimap has been framed).
+#[tauri::command]
+fn em_configured(state: State<'_, AppState>) -> bool {
+    state.em_config.lock().expect("em config poisoned").is_some()
+}
+
+/// Arm the EM assist loop. Uses `config` if given, else the last stored config
+/// (how the topbar/dock start it). No-op if already running.
+#[tauri::command]
+fn em_start(app: AppHandle, state: State<'_, AppState>, config: Option<em::EmConfig>) {
+    let cfg = match config.or_else(|| state.em_config.lock().expect("em config poisoned").clone()) {
+        Some(c) => c,
+        None => {
+            let _ = app.emit(
+                "em:status",
+                serde_json::json!({ "running": false, "phase": "not ready", "detail": "Frame the minimap on the EM Assist page first" }),
+            );
+            return;
+        }
+    };
+    *state.em_config.lock().expect("em config poisoned") = Some(cfg.clone());
+    if state.em.running.swap(true, Ordering::Relaxed) {
+        return; // already running
+    }
+    let em_state = state.em.clone();
+    std::thread::spawn(move || em::run(app, cfg, em_state));
+}
+
+/// Disarm the EM assist loop.
+#[tauri::command]
+fn em_stop(app: AppHandle, state: State<'_, AppState>) {
+    state.em.running.store(false, Ordering::Relaxed);
+    let _ = app.emit(
+        "em:status",
+        serde_json::json!({ "running": false, "phase": "stopped", "detail": "" }),
+    );
+}
+
+/// Whether the EM loop is currently armed.
+#[tauri::command]
+fn em_running(state: State<'_, AppState>) -> bool {
+    state.em.running.load(Ordering::Relaxed)
 }
 
 /// Start tailing the chat.log. Uses `path`, else the configured path, else auto-detect.
@@ -1162,6 +1242,8 @@ pub fn run() {
                 encounters: combat::EncounterStore::open(dir.join("encounters.json")),
                 sessions: sessions::SessionStore::open(dir.join("sessions.json")),
                 auth: auth::AuthState::open(dir.join("session.json")),
+                em: std::sync::Arc::new(em::EmState::default()),
+                em_config: Mutex::new(None),
             });
 
             // Start the always-on EntropiaCentral intel client (universe-wide
@@ -1310,6 +1392,21 @@ pub fn run() {
                         });
                     }
                 });
+
+                // Panic kill-switch for the EM assist — Ctrl+Shift+K stops the
+                // loop from anywhere, even mid-action, without needing focus on
+                // Cerberus.
+                let kill = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyK);
+                let _ = app.global_shortcut().on_shortcut(kill, move |app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        let state = app.state::<AppState>();
+                        state.em.running.store(false, Ordering::Relaxed);
+                        let _ = app.emit(
+                            "em:status",
+                            serde_json::json!({ "running": false, "phase": "stopped", "detail": "Kill-switch" }),
+                        );
+                    }
+                });
             }
             Ok(())
         })
@@ -1323,6 +1420,12 @@ pub fn run() {
             scan_log_history,
             open_stream,
             open_external,
+            em_region_geom,
+            em_set_config,
+            em_configured,
+            em_start,
+            em_stop,
+            em_running,
             session_list,
             session_current,
             session_save,

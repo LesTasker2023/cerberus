@@ -7,9 +7,27 @@
 //! damage line therefore starts the next mob. HP is the total damage to kill.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// Epoch-ms of the last `You inflicted …` damage line. Tracked unconditionally
+/// (before the logger/capture gate) so the accessibility EM assist can tell
+/// whether an engage attempt actually landed a hit, without needing any feed
+/// armed.
+static LAST_DAMAGE_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Epoch-ms of the most recent damage dealt, or 0 if none this session.
+pub fn last_damage_ms() -> u64 {
+    LAST_DAMAGE_MS.load(Ordering::Relaxed)
+}
+
+fn epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 use chrono::Utc;
 use regex::Regex;
@@ -266,6 +284,12 @@ pub fn parse_mob_identity(raw: &str) -> Option<(String, Option<i64>, String)> {
 pub fn process_line(app: &AppHandle, line: &LogLine) {
     let text = line.text.as_str();
     let state = app.state::<AppState>();
+
+    // Record damage time unconditionally, before any gate — the EM assist reads
+    // this to detect a landed hit even when no feed is armed.
+    if re_dmg().is_match(text) {
+        LAST_DAMAGE_MS.store(epoch_ms(), Ordering::Relaxed);
+    }
 
     // Two independent consumers: the Tracker's raw session feed (`capture`) and
     // the mob logger's encounter grouping (`enabled`). Either can run alone.

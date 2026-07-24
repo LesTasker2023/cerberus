@@ -3,7 +3,7 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main", "panel", "capregion", "mobcap", "radar", "dock", "waypoints", "combathud", "crosshair", "tradecap", "calib", "trackhud",
-    "alerts", "splash"],
+    "alerts", "emregion", "splash"],
   "permissions": [
     "core:default",
     "opener:default",

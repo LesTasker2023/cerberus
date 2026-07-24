@@ -16,6 +16,7 @@ export type Page =
   | "arb"
   | "trade"
   | "tracker"
+  | "em"
   | "profile"
   | "settings";
 
@@ -73,6 +74,10 @@ export function Sidebar({
         { page: "trade", label: "Trade", icon: <IconDollar /> },
         { page: "tracker", label: "Tracker", icon: <IconTracker /> },
       ],
+    },
+    {
+      label: "Accessibility",
+      items: [{ page: "em", label: "EM Assist", icon: <IconAccess /> }],
     },
     { label: "System", items: [{ page: "settings", label: "Config", icon: <IconConfig /> }] },
   ];
@@ -263,6 +268,14 @@ function IconMedia() {
     <svg {...S}>
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path d="M10 9.2v5.6l4.5-2.8z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconAccess() {
+  return (
+    <svg {...S}>
+      <circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none" />
+      <path d="M5 8.5h14M12 8.5v7M8 20l4-4.5 4 4.5" />
     </svg>
   );
 }

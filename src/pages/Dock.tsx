@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useBroadcast } from "../hooks/useBroadcast";
+import { startEm, stopEm, useEmRunning } from "../lib/em";
 import { FEATURES } from "../lib/features";
 
 interface OverlayStates {
@@ -38,6 +39,7 @@ export function Dock() {
   });
   const [combat, setCombat] = useState(false);
   const cast = useBroadcast();
+  const emRunning = useEmRunning();
 
   useEffect(() => {
     invoke<OverlayStates>("overlay_states").then(setSt).catch(() => {});
@@ -124,6 +126,13 @@ export function Dock() {
           title="Chat alerts — trigger hits pop up in-game"
         >
           <IconAlert />
+        </button>
+        <button
+          className={`dockbtn ${emRunning ? "dockbtn--on" : ""}`}
+          onClick={() => (emRunning ? stopEm() : startEm())}
+          title="EM assist — engage-mob loop (Ctrl+Shift+K stops)"
+        >
+          <IconEm />
         </button>
 
         <div className="dock__grip" data-tauri-drag-region title="Drag">
@@ -221,6 +230,17 @@ function IconAlert() {
       <path d={HEX} />
       <path d="M9.2 15.2h5.6M12 7.4a3 3 0 0 0-3 3c0 2.2-.7 3.4-1.2 4.1h8.4c-.5-.7-1.2-1.9-1.2-4.1a3 3 0 0 0-3-3Z" />
       <path d="M11 17.2h2" opacity="0.7" />
+    </svg>
+  );
+}
+
+function IconEm() {
+  return (
+    <svg {...S}>
+      <path d={HEX} />
+      <circle cx="12" cy="12" r="4.6" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+      <path d="M12 5.2v2M12 16.8v2M5.2 12h2M16.8 12h2" opacity="0.75" />
     </svg>
   );
 }

@@ -17,6 +17,7 @@ import { DelBoy } from "./pages/DelBoy";
 import { ArbBoard } from "./pages/ArbBoard";
 import { Trade } from "./pages/Trade";
 import { Tracker } from "./pages/Tracker";
+import { EmTool } from "./pages/EmTool";
 import { Profile } from "./pages/Profile";
 import { Settings } from "./pages/Settings";
 import { Login } from "./pages/Login";
@@ -32,6 +33,7 @@ import { usePlayerPosition } from "./hooks/usePlayerPosition";
 import { useBroadcast } from "./hooks/useBroadcast";
 import { useUpdater } from "./hooks/useUpdater";
 import { useLocations } from "./hooks/useLocations";
+import { pushEmConfig, startEm, stopEm, useEmRunning } from "./lib/em";
 import { insertSighting } from "./lib/sightings";
 import { upsertLocation } from "./lib/locations";
 
@@ -51,6 +53,12 @@ export default function App() {
   const tracker = useTrackerSession();
   // Chat triggers also live at the root so alerts fire from any page.
   const triggers = useChatTriggers();
+  const emRunning = useEmRunning();
+  // Hand the saved EM config to the backend on boot so the topbar and HUD dock
+  // can arm it without visiting the EM page.
+  useEffect(() => {
+    pushEmConfig();
+  }, []);
   const [page, setPage] = useState<Page>("home");
   /** Entity the Database should open on arrival (set by "view in Database" links). */
   const [codexUrl, setCodexUrl] = useState<string | null>(null);
@@ -189,6 +197,7 @@ export default function App() {
     arb: "Arb Board",
     trade: "Trade",
     tracker: "Tracker",
+    em: "EM Assist",
     profile: "Player Profile",
     settings: "Config",
   };
@@ -220,6 +229,20 @@ export default function App() {
             aria-label="Toggle location broadcast"
           >
             <BroadcastIcon />
+          </button>
+          <button
+            className={`topbar__dock ${emRunning ? "topbar__dock--on" : ""}`}
+            onClick={async () => {
+              if (emRunning) {
+                stopEm();
+              } else if (!(await startEm())) {
+                setPage("em"); // nothing framed yet — send them to set it up
+              }
+            }}
+            title={emRunning ? "EM assist running — click to stop" : "Start EM assist"}
+            aria-label="Toggle EM assist"
+          >
+            <EmIcon />
           </button>
           <button
             className={`topbar__dock ${dockOpen ? "topbar__dock--on" : ""}`}
@@ -254,6 +277,7 @@ export default function App() {
           {page === "arb" && <ArbBoard />}
           {page === "trade" && <Trade />}
           {page === "tracker" && <Tracker tracker={tracker} onOpenDb={openInDb} />}
+          {page === "em" && <EmTool />}
           {page === "profile" && (
             <Profile
               session={auth.session}
@@ -305,6 +329,23 @@ function HudDockIcon() {
     >
       <path d="M12 2 20 6.5 20 15.5 12 20 4 15.5 4 6.5Z" />
       <circle cx="12" cy="11" r="2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function EmIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+      <path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3" />
     </svg>
   );
 }

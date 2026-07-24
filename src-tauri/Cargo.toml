@@ -1,6 +1,6 @@
 [package]
 name = "cerberus"
-version = "0.6.0"
+version = "0.7.0"
 description = "Cerberus — Entropia Universe space PVP clan tool"
 authors = ["les-t"]
 edition = "2021"

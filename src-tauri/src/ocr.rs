@@ -9,6 +9,17 @@ pub fn read_region(x: i32, y: i32, w: i32, h: i32) -> Result<String, String> {
     recognize(&bgra, w, h)
 }
 
+/// Grab a raw top-down BGRA screenshot of a screen rectangle (no OCR). Used by
+/// the minimap blip scan, which reads pixel colour, not text.
+#[cfg(windows)]
+pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Result<Vec<u8>, String> {
+    screenshot(x, y, w, h)
+}
+#[cfg(not(windows))]
+pub fn grab(_x: i32, _y: i32, _w: i32, _h: i32) -> Result<Vec<u8>, String> {
+    Err("screenshot is only available on Windows".into())
+}
+
 /// Grab `w`×`h` pixels at screen `(x, y)` as top-down BGRA (alpha forced opaque).
 #[cfg(windows)]
 fn screenshot(x: i32, y: i32, w: i32, h: i32) -> Result<Vec<u8>, String> {
