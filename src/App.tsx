@@ -12,6 +12,7 @@ import { MobDb } from "./pages/MobDb";
 import { MapView } from "./pages/MapView";
 import { Codex } from "./pages/Codex";
 import { Media } from "./pages/Media";
+import { Forum } from "./pages/Forum";
 import { ClanFeed } from "./pages/ClanFeed";
 import { DelBoy } from "./pages/DelBoy";
 import { ArbBoard } from "./pages/ArbBoard";
@@ -26,7 +27,6 @@ import { useLogWatch } from "./hooks/useLogWatch";
 import { useTrackerSession } from "./hooks/useTrackerSession";
 import { useChatTriggers } from "./hooks/useChatTriggers";
 import { useEcIntel } from "./hooks/useEcIntel";
-import { useAsteroids } from "./hooks/useAsteroids";
 import { useEncounters } from "./hooks/useEncounters";
 import { usePois } from "./hooks/usePois";
 import { usePlayerPosition } from "./hooks/usePlayerPosition";
@@ -41,7 +41,6 @@ export default function App() {
   const auth = useAuth();
   const watch = useLogWatch();
   const ec = useEcIntel();
-  const rocks = useAsteroids();
   const encounters = useEncounters();
   const poiStore = usePois();
   const playerPos = usePlayerPosition();
@@ -192,6 +191,7 @@ export default function App() {
     map: "Sector Map",
     codex: "Database",
     media: "Media",
+    forum: "Forum",
     clan: "Clan Sync",
     delboy: "DelBoy",
     arb: "Arb Board",
@@ -255,15 +255,16 @@ export default function App() {
           <WindowControls />
         </header>
 
-        <main className="content">
+        {/* The map is a viewport rather than a document, so it drops the shell's
+            page gutter and fills the window edge to edge. */}
+        <main className={`content ${page === "map" ? "content--bleed" : ""}`}>
           {page === "home" && <Dashboard ec={ec} />}
           {page === "feed" && <Feed watch={watch} triggers={triggers} />}
-          {page === "rocks" && <Asteroids store={rocks} />}
+          {page === "rocks" && <Asteroids store={poiStore} />}
           {page === "combat" && <Combat store={encounters} />}
           {page === "bestiary" && <MobDb store={encounters} />}
           {page === "map" && (
             <MapView
-              store={rocks}
               poiStore={poiStore}
               playerPos={playerPos}
               mobStore={encounters}
@@ -272,6 +273,7 @@ export default function App() {
           )}
           {page === "codex" && <Codex initialUrl={codexUrl} />}
           {page === "media" && <Media />}
+          {page === "forum" && <Forum />}
           {page === "clan" && <ClanFeed pilot={auth.session?.display_name} />}
           {page === "delboy" && <DelBoy />}
           {page === "arb" && <ArbBoard />}

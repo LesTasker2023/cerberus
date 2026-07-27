@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { useAsteroids } from "../hooks/useAsteroids";
+import type { usePois } from "../hooks/usePois";
 import { IconCheck, IconCopy, IconEye, IconFrame, IconTrash } from "../components/icons";
 
 const CATEGORIES = [
@@ -23,13 +23,16 @@ function catClass(key: string): string {
 }
 
 /** HH:MM:SS out of an ISO timestamp. */
-function clock(iso: string): string {
-  const d = new Date(iso);
+function clock(iso: string | null): string {
+  const d = new Date(iso ?? "");
   return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("en-GB");
 }
 
-export function Asteroids({ store }: { store: ReturnType<typeof useAsteroids> }) {
-  const { items, remove } = store;
+export function Asteroids({ store }: { store: ReturnType<typeof usePois> }) {
+  // Rocks and hand-placed markers share one store now, so this page shows the
+  // logged slice — the ones scanned in-game, which is what it has always meant.
+  const { remove } = store;
+  const items = store.items.filter((p) => p.logged_at != null);
 
   const [reading, setReading] = useState(false);
   const [read, setRead] = useState<{ ok: boolean; text: string } | null>(null);

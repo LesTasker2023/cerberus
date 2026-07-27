@@ -383,6 +383,31 @@ body {
   border-radius: 0;
   box-shadow: none;
 }
+/* The sector map is a viewport, not a document. Same opt-out as the feed, plus
+   the shell gutter is dropped (`content--bleed`) so the scene reads as the page
+   itself rather than something sitting inside a frame. Its floating toolbar,
+   filters and detail panel are absolutely positioned and carry their own inset,
+   so they keep the same visual margin they had against the old card edge. */
+.main .content--bleed {
+  padding: 0;
+}
+.main .content > .map {
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+/* The WebGL canvas clears fully transparent, but the raw backdrop — aurora,
+   embers, the Cerberus mark — fights the starfield underneath it. This scrim
+   sits between the two (behind the canvas, above the backdrop), knocking the
+   backdrop back to a suggestion while keeping the scene from reading as a
+   painted-on black box. Raise the alpha toward 1 for more black, drop it for
+   more bleed-through. Matches the radar overlay's own surface value.
+   Scoped to the main page: the radar window already applies this colour to
+   `.radar`, and layering both would leave it near-opaque. */
+.main .content > .map .map__view {
+  background: rgba(6, 8, 14, 0.82);
+}
 
 /* ── Buttons ── */
 .btn {
@@ -1934,6 +1959,25 @@ html.win-transparent #root {
 }
 .mtchip--outlaw b {
   color: #84cc16;
+}
+/* Back out of a focused sector — a chip that behaves as a button. */
+.mtchip--back {
+  cursor: pointer;
+  color: var(--muted);
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+.mtchip--back:hover {
+  color: var(--text);
+  background: var(--accent);
+}
+.mtchip--back:hover b {
+  color: var(--accent-ink);
+}
+/* Affordance for the overview — the grid is clickable, which isn't obvious. */
+.mtchip--hint {
+  color: var(--faint);
+  border-style: dashed;
 }
 .maptool {
   width: 40px;
@@ -6849,4 +6893,850 @@ html.win-transparent #root {
 }
 .thud--down {
   color: var(--accent) !important;
+}
+
+/* â”€â”€ Forum reader â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Master/detail over the Entropia Universe forum. Read-only by design: every
+   compose/reply control links out to the real site. */
+.forum {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.85fr) minmax(0, 1.15fr);
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
+  padding: 2px 2px 4px;
+}
+.forum__list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.forum__rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.forum__read {
+  display: flex;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(207, 59, 45, 0.04), transparent 55%),
+    var(--surface);
+  overflow: hidden;
+}
+.forum__empty {
+  padding: 26px 14px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+.forum__empty--bad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.forum__none {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px;
+  text-align: center;
+}
+.forum__nonet {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.forum__nones {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+.forum__foot {
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
+
+/* Board tabs */
+.forum__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.fboard {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  padding: 4px 11px;
+  cursor: pointer;
+}
+.fboard:hover {
+  color: var(--text);
+  border-color: var(--faint);
+}
+.fboard--on {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* Archive search */
+.fsearch {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.fsearch__in {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px 9px;
+  outline: none;
+}
+.fsearch__in:focus {
+  border-color: var(--accent);
+}
+.fsearch__in::placeholder {
+  color: var(--faint);
+}
+.fsearch__btn {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: 13px;
+  width: 30px;
+  cursor: pointer;
+}
+.fsearch__btn:hover {
+  color: var(--text);
+  border-color: var(--faint);
+}
+
+/* "N new posts" pill from the live watcher */
+.fnew {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 8px 10px 0;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-wash);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.fnew i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--glow);
+}
+
+/* Topic rows */
+.ftopic {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.ftopic:hover {
+  background: var(--row-hover);
+}
+.ftopic--on {
+  background: var(--row-hover);
+  border-left-color: var(--accent);
+}
+.ftopic__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ftopic__title {
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--text);
+}
+.ftopic__pin {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-global);
+}
+.ftopic__closed {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.ftopic__ex {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ftopic__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.ftopic__spacer {
+  flex: 1;
+}
+.ftopic__cat {
+  color: var(--c-team);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 5px;
+  white-space: nowrap;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ftopic__who {
+  color: var(--muted);
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Thread reader */
+.fthread {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+.fthread__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.fthread__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.fthread__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fthread__sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.fthread__back,
+.fthread__ext {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  color: var(--muted);
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+}
+.fthread__ext {
+  margin-left: auto;
+}
+.fthread__back:hover,
+.fthread__ext:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.fthread__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 12px 12px;
+}
+.fthread__more,
+.fthread__reply {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-lg);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  text-align: center;
+}
+.fthread__replyt {
+  color: var(--muted);
+}
+
+/* Posts */
+.fpost {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.fpost__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.fpost__spacer {
+  flex: 1;
+}
+.fpost__av {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg-3);
+}
+.fpost__av--none {
+  border: 1px solid var(--line);
+}
+.fpost__num,
+.fpost__ago {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.fpost__ext {
+  border: none;
+  background: none;
+  color: var(--faint);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0;
+}
+.fpost:hover .fpost__ext,
+.fpost__ext:focus-visible {
+  opacity: 1;
+}
+.fpost__ext:hover {
+  color: var(--accent);
+}
+.fpost__body {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* Author name to forum dossier popover */
+.fauthor {
+  position: relative;
+}
+.fauthor__btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  border-bottom: 1px dotted var(--faint);
+}
+.fauthor__btn:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.fpop {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 260px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+.fpop__head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.fpop__name {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+}
+.fpop__title {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--c-global);
+}
+.fpop__dim {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+.fpop__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.fpopcell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.fpopcell__k {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--faint);
+}
+.fpopcell__v {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+.fpop__link {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 5px;
+  cursor: pointer;
+}
+.fpop__link:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* Links out to the real forum -- posting lives there, not here */
+.fcta {
+  width: 100%;
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+  background: var(--accent-wash);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.fcta:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.flink {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+@media (max-width: 1100px) {
+  .forum {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .forum__read {
+    display: none;
+  }
+}
+
+/* â”€â”€ Sector dossier card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Slides up at bottom-centre when a sector is focused. Sits between the detail
+   panel (bottom-left) and the filters (bottom-right), so nothing overlaps.
+   Notched top-right corner + accent rail for the HUD read. */
+.seccard {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 22;
+  width: min(430px, calc(100% - 40px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: rgba(11, 13, 18, 0.9);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.6);
+  /* Clipped corner â€” cheap sci-fi panel cue, no extra markup. */
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  overflow: hidden;
+  animation: seccardin 0.22s ease-out;
+}
+@keyframes seccardin {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seccard {
+    animation: none;
+  }
+}
+
+/* Accent rail along the top; turns hazard-red for lootable sectors. */
+.seccard__bar {
+  height: 2px;
+  flex: none;
+  background: linear-gradient(90deg, var(--accent), transparent 70%);
+}
+.seccard--pvp .seccard__bar {
+  background: linear-gradient(90deg, #ef4444, transparent 78%);
+}
+
+.seccard__head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px 9px;
+}
+
+/* Insignia: real art when it exists, procedural glyph when it doesn't. */
+.seccard__sigil {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, rgba(207, 59, 45, 0.22), transparent 62%), var(--bg-3);
+  overflow: hidden;
+}
+.seccard__sigil img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.seccard__glyph {
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--muted);
+  letter-spacing: 1px;
+}
+.seccard--pvp .seccard__sigil {
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.seccard__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.seccard__name {
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seccard__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seccard__cell {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.seccard__pvp {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.seccard__x {
+  flex: none;
+  align-self: flex-start;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.seccard__x:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.seccard__stats {
+  display: flex;
+  gap: 14px;
+  padding: 0 13px 9px;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--faint);
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 2px;
+}
+.seccard__stats b {
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.seccard__list {
+  max-height: 208px;
+  overflow-y: auto;
+  padding: 4px 6px 7px;
+}
+.seccard__empty {
+  padding: 16px 8px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* Waypoint rows â€” the reason the card exists. */
+.wprow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--r);
+}
+.wprow:hover {
+  background: var(--row-hover);
+}
+.wprow__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+.wprow__tag {
+  flex: none;
+  width: 58px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-left: 2px solid var(--faint);
+  padding-left: 6px;
+}
+.wprow__tag.cat--space-station,
+.wprow__tag.cat--station {
+  border-left-color: var(--cat-station);
+}
+.wprow__tag.cat--warp-gate {
+  border-left-color: #b98cff;
+}
+.wprow__tag.cat--outlaw-zone {
+  border-left-color: #84cc16;
+}
+.wprow__tag.cat--mob {
+  border-left-color: #f2683c;
+}
+.wprow__tag.cat--player {
+  border-left-color: var(--accent);
+}
+.wprow__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wprow__copy {
+  flex: none;
+  width: 28px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+.wprow:hover .wprow__copy {
+  border-color: var(--line);
+  color: var(--muted);
+}
+.wprow__copy:hover {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+
+/* â”€â”€ Sector card: selected-marker mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Sector name kept as a breadcrumb above the marker name, so focusing a POI
+   never loses the answer to "where am I". */
+.seccard__crumb {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.seccard__cat {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.seccard__poi {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 12px 12px;
+}
+.seccard__coords {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.seccard__coord {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+}
+.seccard__axis {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 1px;
+  color: var(--faint);
+}
+.seccard__val {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.seccard__wp {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.seccard__wp:hover {
+  filter: brightness(1.12);
+}
+.seccard__wp svg {
+  width: 15px;
+  height: 15px;
 }

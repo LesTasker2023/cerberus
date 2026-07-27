@@ -6,6 +6,14 @@ Desktop tool for Les's Entropia Universe space-PVP / piracy clan. Read this befo
 - **Stack:** Tauri 2 + React 19 + Vite + TypeScript. Windows-first. Standalone repo (NOT a Cargo workspace).
 - **Repo:** `github.com/LesTasker2023/cerberus` (public). Branding: crimson accent `--accent #cf3b2d`, Oxanium + JetBrains Mono, dark.
 - **Core idea:** tails the game's `chat.log` and layers tools on top — live feed, hunt tracker, rock/mob logging, 3D sector map, market tools, clan sync, and accessibility automation.
+- **Data sources:** Nexus (canon catalog), EntropiaCentral (live globals + community mob data), the EU forum (Discourse, read-only JSON API — see `forum.rs` / the Forum page).
+
+## KNOWLEDGE.md — read before touching data sources or planning the AI layer
+Research notes toward the grounded "Entropia AI": which source answers what, the
+hard rules (never embed stat tables, every answer cites, key stays out of the
+binary), measured coverage gaps in all three APIs, worked examples, and the
+proposed build order. Nothing in it is built yet. It also records the blocker on
+porting delta's `models/` layer (unverified coloring per-click premise).
 
 ## Build / verify (always run before claiming done)
 - Frontend: `npx tsc --noEmit` and `npx vite build`.
@@ -56,8 +64,8 @@ Desktop tool for Les's Entropia Universe space-PVP / piracy clan. Read this befo
 - See `AUDIT.md` for the vanity-engineering audit (RCR 3/10) and the open items: MapView god-component (383-line effect), 4× duplicated JSON store boilerplate (`asteroids/poi/sessions/combat.rs` → a generic `JsonStore<T>` is justified), `lib.rs` as a god module (commands should move beside their domain modules).
 
 ## Current state (2026-07-24)
-- **Released: v0.6.0.** Auto-updates from prior versions.
-- **⚠️ UNCOMMITTED: the EM accessibility tool** (`src-tauri/src/em.rs`, `src/pages/EmTool.tsx`, `src/pages/EmRegion.tsx`, `src/lib/em.ts`, `src/lib/emConfig.ts`, plus edits to `input.rs`, `combat.rs`, `ocr.rs`, `lib.rs`, `Dock.tsx`, `App.tsx`, `Sidebar.tsx`, `main.tsx`, `tauri.conf.json`, `capabilities/default.json`, `styles.css`). Compile-clean, NOT smoke-tested, NOT committed.
+- **Released: v0.7.0.** In the wild, auto-updates from prior versions.
+- **EM accessibility tool is committed** (HEAD `a3f7718`). Still NOT smoke-tested/calibrated with Les — the unverified assumptions below stand.
   - **EM tool** = accessibility "engage mob" loop. Nav: Accessibility → EM Assist. Loop: press F (engage) → if no `You inflicted` damage lands, OCR the game minimap for red blips, turn the view (Z/C) toward the nearest, step W, repeat until combat registers. Minimap is heading-up (12 o'clock = forward); dot angle from vertical drives the turn. Rings = range. Everything tunable in the UI (persisted localStorage `cerberus.emTuning`/`cerberus.emRegion`, pushed to backend via `em_set_config` so topbar + HUD-dock toggles can arm it).
   - Safety: input gated on Entropia focus; global kill-switch **Ctrl+Shift+K**; hard time cap.
   - Start/stop from: the EM Assist page, the **topbar** EM button, and the **HUD dock** EM button.

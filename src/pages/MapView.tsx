@@ -5,14 +5,13 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
-import type { useAsteroids } from "../hooks/useAsteroids";
 import type { useEncounters } from "../hooks/useEncounters";
 import type { usePois, Poi } from "../hooks/usePois";
 import type { PlayerPos } from "../hooks/usePlayerPosition";
 import type { ClanLocation } from "../lib/locations";
-import { combinePois } from "../lib/pois";
-import { MapDetail, type MapPoi } from "../components/MapDetail";
+import { combinePois, type MapPoi } from "../lib/pois";
 import { PoiEditor } from "../components/PoiEditor";
+import { SectorCard } from "../components/SectorCard";
 
 const CAT_COLOR: Record<string, number> = {
   station: 0x46b0c4,
@@ -29,7 +28,12 @@ const CAT_COLOR: Record<string, number> = {
   mob: 0xf2683c,
   player: 0xff4d6d, // logged players / hostiles
 };
-const M_BARE = 0x3f78c0; // belt-anchor skeleton — tactical steel-blue, not grey
+/** Belt-anchor skeleton. Neutral grey rather than the steel-blue it used to be:
+ *  that sat right next to `asteroid-m`'s blue, so the belt scaffolding and real
+ *  M-type rocks read as the same thing. Grey also lets it recede, which is what
+ *  scaffolding should do. Rendered ×0.8 (see the draw loop), so it lands darker
+ *  than `asteroid-scrap` and stays distinct from that too. */
+const M_BARE = 0x767c86;
 
 /** Logged mobs within this many EU units of each other belong to the same spawn
  *  area (single-link). Above it, a separate spawn sphere is drawn — so hunting a
@@ -81,7 +85,9 @@ function labelFor(p: MapPoi): string | null {
 const FILTERS: { key: string; label: string; color: string }[] = [
   { key: "space-station", label: "Space Stations", color: "#5ec8d8" },
   { key: "warp-gate", label: "Warp Gates", color: "#b98cff" },
-  { key: "asteroid", label: "Asteroids", color: "#3f78c0" },
+  // Swatch follows asteroid-m, the dominant type — it used to be the anchor
+  // colour, which is now grey and no longer represents the group.
+  { key: "asteroid", label: "Asteroids", color: "#3f7fff" },
   { key: "mob", label: "Mob Zones", color: "#f2683c" },
   { key: "outlaw-zone", label: "Outlaw Zones", color: "#84cc16" },
   { key: "player", label: "Players", color: "#ff4d6d" },
@@ -97,8 +103,153 @@ const GRID_COLS = 4;
 const GRID_ROWS = 3;
 const GRID_COL_LETTERS = ["B", "C", "D", "E"];
 const GRID_ROW_NUMS = [2, 3, 4];
+/** Sector name cap-height as a fraction of its cell — so every sector's name
+ *  renders at the same size regardless of how long it is. */
+const SECTOR_LABEL_HEIGHT = 0.13;
+/** Resting opacity of the painted sector names — floor markings, not UI. */
+const SECTOR_LABEL_OPACITY = 0.42;
+/**
+ * How far the sector name sits from its cell's low-Y edge, as a fraction of the
+ * cell. Captioning the edge rather than stamping the middle keeps the name clear
+ * of the markers, which cluster centrally — and it reads like a map legend
+ * rather than a watermark. Far enough in to clear the seam glow.
+ */
+const SECTOR_LABEL_EDGE = 0.11;
+
+/**
+ * A sector takes its name from the space station sitting in it — Calypso,
+ * Arkadia, ROCKtropia and so on — rather than its grid reference, since that's
+ * what anyone actually calls the place. Derived from the POI store at scene
+ * build, so a station added later names its own sector with no code change.
+ *
+ * Cells holding several stations use the one nearest the cell centre, which is
+ * what picks Calypso out of Aris/Calypso/Setesh in B3. Add an entry to
+ * SECTOR_NAME_OVERRIDES when that heuristic gets it wrong.
+ */
+const SECTOR_NAME_OVERRIDES: Record<string, string> = {
+  // Neither of these can be derived, and both contradict where the matching
+  // POIs currently sit: there is no Cyrene station at all (only a warp gate,
+  // logged in C2), and the Zeus station's coordinates put it in C3 next to
+  // Erebos. Names confirmed by Les, so they win — but if those two POI
+  // coordinates are simply wrong, fixing them is the better repair and these
+  // entries can then go.
+  B2: "Cyrene",
+  C2: "Zeus",
+  // The station POI is "Toulan"; the sector goes by Poolan.
+  E4: "Poolan",
+};
 /** [col, row] of the PvP grid cells — C2, C3, D3, E2. */
 const GRID_PVP_CELLS: [number, number][] = [[1, 0], [1, 1], [2, 1], [3, 0]];
+
+/** The hazard red shared by the PVP sphere and the sector seams. Both mark the
+ *  same thing — the boundary you don't want to cross by accident — so they're
+ *  one constant rather than two colours that can drift apart. */
+const PVP_COLOR = 0xef4444;
+/** Glow width of a sector seam, as a fraction of one grid cell. Raise for a
+ *  fatter halo, drop for a tighter line. */
+const GRID_GLOW_WIDTH = 0.045;
+/**
+ * Seam brightness. Kept well under 1 because a ribbon's core always faces the
+ * camera at full strength, whereas the PVP sphere's fresnel only lights near its
+ * silhouette — most of the ball reads dim. Matching the sphere means matching
+ * that body brightness, not its rim, or the seams turn into laser beams.
+ */
+const GRID_GLOW_INTENSITY = 0.34;
+/** Wash over the four lootable-PVP cells. Additive on a dark field, so this goes
+ *  a long way — it should suggest the hazard, not colour the map. */
+const GRID_PVP_FILL_OPACITY = 0.055;
+
+/**
+ * Semantic zoom: how far from the camera a category's label survives, in world
+ * units. This is the label budget — a navigation map should read as a handful of
+ * destinations at rest, not thirty names at once, so only the things you'd
+ * actually fly *to* are labelled from a distance. Everything else earns its name
+ * as you approach it, or on hover.
+ *
+ * The belt spans roughly 8 units, and the camera orbits between 1 and 60.
+ */
+const LABEL_RANGE: Record<string, number> = {
+  "space-station": Infinity, // destinations — always readable
+  station: Infinity,
+  "warp-gate": Infinity,
+  "outlaw-zone": 26, // hazards you want to see before you're in them
+  player: 20,
+  mob: 16,
+  landmark: 16,
+};
+/** Fallback for everything unlisted — mostly logged rocks, which are survey
+ *  detail and only worth naming once you're among them. */
+const LABEL_RANGE_DEFAULT = 7;
+
+/**
+ * Depth cue. Markers and labels fade with distance *relative to the point you're
+ * orbiting*, not absolutely — an absolute fog would black out the whole belt the
+ * moment you pulled back. `NEAR`/`FAR` are multiples of the camera-to-pivot
+ * distance, so the effect holds at any zoom: things at your focal depth are
+ * full strength, things well behind it recede.
+ */
+const DEPTH_NEAR = 0.75;
+const DEPTH_FAR = 2.1;
+/** How dark the farthest markers get. Not 0 — they should still register. */
+const DEPTH_MIN = 0.22;
+/** Labels fade harder than markers; distant text is noise, distant dots are context. */
+const DEPTH_MIN_LABEL = 0.1;
+
+/** Fade-in for markers revealed by focusing a sector. Kept short — this is
+ *  feedback that the view changed, not an animation to sit through. */
+const REVEAL_MS = 260;
+/** Random per-marker delay so a sector blooms in rather than flashing on as one
+ *  hard edge. Deterministic per marker (assigned once at creation). */
+const REVEAL_STAGGER_MS = 140;
+
+/**
+ * Overview mode shows destinations only — the things you'd actually plot a
+ * course to. Everything else (rocks, mobs, zones, players) is sector detail and
+ * appears once you drill into a sector.
+ */
+const OVERVIEW_CATEGORIES = new Set(["space-station", "station", "warp-gate"]);
+
+/** Cell reference like "C3" from column/row indices. */
+const cellRef = (c: number, r: number) => GRID_COL_LETTERS[c] + GRID_ROW_NUMS[r];
+
+/** Which grid cell an EU coordinate falls in, or null if outside the grid. */
+function cellOfEu(x: number, y: number): { c: number; r: number } | null {
+  const c = Math.floor((x - GRID_ORIGIN_EU.x) / GRID_CELL_EU);
+  const r = Math.floor((y - GRID_ORIGIN_EU.y) / GRID_CELL_EU);
+  if (c < 0 || c >= GRID_COLS || r < 0 || r >= GRID_ROWS) return null;
+  return { c, r };
+}
+const cellOfPoi = (p: MapPoi) => cellOfEu(p.euX, p.euY);
+
+/**
+ * Resolve every cell to its sector name: an explicit override first, else the
+ * station nearest the cell centre, else the grid reference. Shared by the floor
+ * markings and the toolbar so the two can never disagree.
+ */
+function deriveSectorNames(pois: MapPoi[]): Map<string, string> {
+  const stations = pois.filter(
+    (p) => p.category === "space-station" || p.category === "station",
+  );
+  const out = new Map<string, string>();
+  for (let c = 0; c < GRID_COLS; c++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      const ref = cellRef(c, r);
+      const ex0 = GRID_ORIGIN_EU.x + c * GRID_CELL_EU;
+      const ey0 = GRID_ORIGIN_EU.y + r * GRID_CELL_EU;
+      const cx = ex0 + GRID_CELL_EU / 2;
+      const cy = ey0 + GRID_CELL_EU / 2;
+      let best: { name: string; d: number } | null = null;
+      for (const p of stations) {
+        if (p.euX < ex0 || p.euX >= ex0 + GRID_CELL_EU) continue;
+        if (p.euY < ey0 || p.euY >= ey0 + GRID_CELL_EU) continue;
+        const d = Math.hypot(p.euX - cx, p.euY - cy);
+        if (!best || d < best.d) best = { name: p.name, d };
+      }
+      out.set(ref, SECTOR_NAME_OVERRIDES[ref] ?? best?.name ?? ref);
+    }
+  }
+  return out;
+}
 
 /** Map a POI to its filter group (one of FILTERS' keys). */
 function filterGroupOf(p: MapPoi): string {
@@ -157,40 +308,105 @@ const MARKER_SCALE_MIN = 0.15;
 const MARKER_SCALE_MAX = 1;
 const MARKER_STORE_KEY = "cerberus.markerScale";
 
-/** Render a label to a canvas texture: text on a translucent dark pill with a
- *  faint coloured border, so it stays legible over bright fields. */
-function drawLabelTexture(text: string, color: string): { tex: THREE.CanvasTexture; aspect: number } {
+/** Pointer tolerance for picking a marker, in screen pixels. Fitts's law: a
+ *  fixed pixel target beats hit-testing geometry that shrinks with distance. */
+const PICK_RADIUS_PX = 15;
+/** How much the hovered marker grows, as confirmation of what you're aiming at. */
+const HOVER_SCALE = 1.7;
+
+
+/**
+ * Render a label to a canvas texture.
+ *
+ * Default is bare text with a dark halo rather than a filled pill. Thirty pills
+ * on screen is thirty opaque rectangles competing with the scene — the chrome
+ * ends up louder than the names it carries. The halo buys the same legibility
+ * over a bright field for none of the visual weight. `boxed` keeps the pill for
+ * the few labels that should read as UI rather than as part of the scene.
+ */
+function drawLabelTexture(
+  text: string,
+  color: string,
+  boxed = false,
+): { tex: THREE.CanvasTexture; aspect: number } {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   const font = "600 60px 'IBM Plex Mono', monospace";
   ctx.font = font;
-  const padX = 32;
+  const padX = boxed ? 32 : 18;
   const w = Math.ceil(ctx.measureText(text).width + padX * 2);
   const h = 96;
   canvas.width = w;
   canvas.height = h;
   ctx.font = font;
 
-  // Rounded-rect pill.
-  const r = 20;
-  const bx = 5, by = 20, bw = w - 10, bh = h - 40;
-  ctx.beginPath();
-  ctx.moveTo(bx + r, by);
-  ctx.arcTo(bx + bw, by, bx + bw, by + bh, r);
-  ctx.arcTo(bx + bw, by + bh, bx, by + bh, r);
-  ctx.arcTo(bx, by + bh, bx, by, r);
-  ctx.arcTo(bx, by, bx + bw, by, r);
-  ctx.closePath();
-  ctx.fillStyle = "rgba(7, 9, 13, 0.6)";
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = color + "66"; // 6-digit hex + alpha
-  ctx.stroke();
+  if (boxed) {
+    // Rounded-rect pill.
+    const r = 20;
+    const bx = 5, by = 20, bw = w - 10, bh = h - 40;
+    ctx.beginPath();
+    ctx.moveTo(bx + r, by);
+    ctx.arcTo(bx + bw, by, bx + bw, by + bh, r);
+    ctx.arcTo(bx + bw, by + bh, bx, by + bh, r);
+    ctx.arcTo(bx, by + bh, bx, by, r);
+    ctx.arcTo(bx, by, bx + bw, by, r);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(7, 9, 13, 0.6)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = color + "66"; // 6-digit hex + alpha
+    ctx.stroke();
+  }
 
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  if (!boxed) {
+    // Dark halo: keeps the name readable against the belt without a filled box.
+    ctx.lineWidth = 9;
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(4, 6, 10, 0.92)";
+    ctx.strokeText(text, w / 2, h / 2 + 1);
+  }
   ctx.fillStyle = color;
   ctx.fillText(text, w / 2, h / 2 + 1);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  return { tex, aspect: w / h };
+}
+
+/**
+ * Sector name as a texture for the floor markings. Unlike the POI labels these
+ * aren't camera-facing sprites — they lie flat on the ecliptic and take the
+ * scene's perspective, which is what keeps them reading as part of the space
+ * rather than as another thing competing in the UI layer.
+ */
+function drawFloorText(
+  text: string,
+  color: string,
+): { tex: THREE.CanvasTexture; aspect: number } {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  const font = "700 110px 'IBM Plex Mono', monospace";
+  // Wide tracking is the cartographic convention for a region name, and it
+  // reads better than a tight word when foreshortened by perspective.
+  const track = "14px";
+  const apply = () => {
+    ctx.font = font;
+    // Not in every engine; ignored where unsupported rather than throwing.
+    (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = track;
+  };
+  apply();
+  const padX = 40;
+  const padY = 34;
+  const w = Math.ceil(ctx.measureText(text).width + padX * 2);
+  const h = 110 + padY * 2;
+  canvas.width = w;
+  canvas.height = h;
+  apply(); // resizing the canvas resets the 2D context
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = color;
+  ctx.fillText(text, w / 2, h / 2);
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearFilter;
   return { tex, aspect: w / h };
@@ -226,8 +442,101 @@ function fresnelMaterial(color: number, power = 2.4, intensity = 1.2): THREE.Sha
   });
 }
 
-function makeLabel(text: string, color: string): THREE.Sprite {
-  const { tex, aspect } = drawLabelTexture(text, color);
+/**
+ * Neon-glow material for the sector seams — the line equivalent of the PVP
+ * sphere's fresnel. That shader fades by surface normal against the view vector,
+ * which a line can't supply, so the falloff is taken across the ribbon's width
+ * instead: a hot core at the centreline easing out to nothing at the edges.
+ * Same additive, depth-write-free treatment, so it reads as the same material.
+ */
+function glowRibbonMaterial(color: number, power = 2.2, intensity = 1.6): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uPower: { value: power },
+      uIntensity: { value: intensity },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor; uniform float uPower; uniform float uIntensity;
+      varying vec2 vUv;
+      void main() {
+        // 0 at the centreline, 1 at the ribbon edge.
+        float d = abs(vUv.x * 2.0 - 1.0);
+        float g = pow(1.0 - d, uPower);
+        gl_FragColor = vec4(uColor * g * uIntensity, g);
+      }`,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+}
+
+/**
+ * Widen line segments into flat ribbons lying in the map's horizontal plane, so
+ * `glowRibbonMaterial` has width to fade across. WebGL caps `linewidth` at 1, so
+ * geometry is the only way to get a thick glowing line. All segments are merged
+ * into one buffer — a mesh per seam would be a draw call per seam.
+ *
+ * `pts` is a flat list of segment endpoint pairs, as fed to `LineSegments`.
+ */
+function buildGlowRibbons(pts: THREE.Vector3[], width: number): THREE.BufferGeometry {
+  const segs = Math.floor(pts.length / 2);
+  const position = new Float32Array(segs * 4 * 3);
+  const uv = new Float32Array(segs * 4 * 2);
+  const index = new Uint32Array(segs * 6);
+  const half = width / 2;
+
+  for (let s = 0; s < segs; s++) {
+    const a = pts[s * 2];
+    const b = pts[s * 2 + 1];
+    // Perpendicular within the horizontal plane (the grid is flat, y constant).
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const px = (-dz / len) * half;
+    const pz = (dx / len) * half;
+
+    const corners = [
+      [a.x - px, a.y, a.z - pz, 0, 0],
+      [a.x + px, a.y, a.z + pz, 1, 0],
+      [b.x + px, b.y, b.z + pz, 1, 1],
+      [b.x - px, b.y, b.z - pz, 0, 1],
+    ];
+    for (let c = 0; c < 4; c++) {
+      const v = (s * 4 + c) * 3;
+      position[v] = corners[c][0];
+      position[v + 1] = corners[c][1];
+      position[v + 2] = corners[c][2];
+      const t = (s * 4 + c) * 2;
+      uv[t] = corners[c][3];
+      uv[t + 1] = corners[c][4];
+    }
+    const base = s * 4;
+    const i = s * 6;
+    index[i] = base;
+    index[i + 1] = base + 1;
+    index[i + 2] = base + 2;
+    index[i + 3] = base;
+    index[i + 4] = base + 2;
+    index[i + 5] = base + 3;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(position, 3));
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(new THREE.BufferAttribute(index, 1));
+  return geo;
+}
+
+function makeLabel(text: string, color: string, boxed = false): THREE.Sprite {
+  const { tex, aspect } = drawLabelTexture(text, color, boxed);
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }),
   );
@@ -247,14 +556,12 @@ function setLabelText(sprite: THREE.Sprite, text: string, color: string) {
 }
 
 export function MapView({
-  store,
   poiStore,
   playerPos,
   mobStore,
   presence,
   compact = false,
 }: {
-  store: ReturnType<typeof useAsteroids>;
   poiStore: ReturnType<typeof usePois>;
   playerPos: PlayerPos | null;
   /** Logged mob encounters — plotted as spawn points + wrapped in a sphere. */
@@ -264,11 +571,11 @@ export function MapView({
   /** Radar mode: chrome hidden, camera follows the player. */
   compact?: boolean;
 }) {
-  // Merge static HM context + editable POIs + logged rocks + mob spawns, then
-  // thin the belt: C/F/S asteroids inside the PVP sphere are dropped (they're
-  // noise inside the zone) while ND and anything outside the sphere is kept.
+  // Build markers from the one POI store + mob spawns, then thin the belt: C/F/S
+  // asteroids inside the PVP sphere are dropped (they're noise inside the zone)
+  // while ND and anything outside the sphere is kept.
   const pois = useMemo<MapPoi[]>(() => {
-    const all = combinePois(store.items, poiStore.items, mobStore?.items ?? []);
+    const all = combinePois(poiStore.items, mobStore?.items ?? []);
     const anchors = all.filter(isBareM);
     if (anchors.length < 2) return all;
     const cx = anchors.reduce((s, p) => s + p.euX, 0) / anchors.length;
@@ -280,9 +587,32 @@ export function MapView({
       if (!HIDE.has(p.category)) return true;
       return Math.hypot(p.euX - cx, p.euY - cy, p.euZ - cz) > r; // keep only if outside the sphere
     });
-  }, [store.items, poiStore.items, mobStore?.items]);
+  }, [poiStore.items, mobStore?.items]);
 
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  /** Cell reference → sector name, shared by the floor markings and the toolbar. */
+  const sectorNames = useMemo(() => deriveSectorNames(pois), [pois]);
+  /**
+   * Drill-down state. `null` = the overview: stations and gates only, with the
+   * sector grid live for hover/click. Set to a cell and the camera flies in and
+   * the rest of that space's detail appears.
+   */
+  const [sector, setSector] = useState<{ c: number; r: number } | null>(null);
+  // The render loop and pointer handlers live inside the scene effect, which
+  // must not rebuild when the view mode changes — a ref carries it across.
+  const sectorRef = useRef<{ c: number; r: number } | null>(null);
+  sectorRef.current = sector;
+  /** Set by the scene; flies the camera back to the opening overview pose. */
+  const flyHomeRef = useRef<(() => void) | null>(null);
+  /** Set by the scene; animates the camera to an arbitrary pose. */
+  const flyToRef = useRef<((pos: THREE.Vector3, tgt: THREE.Vector3) => void) | null>(null);
+  /**
+   * When the in-progress camera flight lands (ms, performance.now clock). The
+   * visibility effect defers marker reveals until then, so a sector's contents
+   * arrive once you're there rather than streaming past you on the way in.
+   * A stale value is harmless — it's already in the past, so the delay is zero.
+   */
+  const flightEndsAtRef = useRef(0);
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const p of pois) {
@@ -364,7 +694,10 @@ export function MapView({
     // to 2× on high-DPI for crispness — cheap now that bloom is gone.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
-    renderer.setClearColor(0x06070b, 1);
+    // Transparent clear — the app's own backdrop and grid show through instead of
+    // a painted-on black, so the scene sits on the window rather than in a box.
+    // The starfield below is real geometry, so it survives.
+    renderer.setClearColor(0x000000, 0);
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -384,6 +717,14 @@ export function MapView({
     controls.dampingFactor = 0.08;
     controls.minDistance = 1;
     controls.maxDistance = 60;
+    // Zoom toward the pointer rather than the pivot. Direct manipulation: the
+    // thing under your cursor is what you're aiming at, so scrolling shouldn't
+    // require re-centring afterwards.
+    controls.zoomToCursor = true;
+    // Stop the camera dropping below the ecliptic, where the floor markings
+    // render mirrored and the grid reads inverted — easy to get lost, and no
+    // useful view down there.
+    controls.maxPolarAngle = THREE.MathUtils.degToRad(88);
 
     // Radar: start top-down 2D, but keep orbit + pan so it can tilt into 3D.
     if (compact) {
@@ -399,6 +740,8 @@ export function MapView({
     const mobPts: { eu: THREE.Vector3; three: THREE.Vector3 }[] = [];
     // Labels kept at a constant on-screen size so far POIs stay readable.
     const labels: THREE.Sprite[] = [];
+    // Flat sector names — faded out by viewing angle in the render loop.
+    const sectorLabels: THREE.Mesh[] = [];
     // Objects that idly rotate (gates spin in-plane, stations tumble).
     const spinners: { o: THREE.Object3D; ax: "y" | "z"; sp: number }[] = [];
 
@@ -421,26 +764,107 @@ export function MapView({
         const ey = GRID_ORIGIN_EU.y + r * GRID_CELL_EU;
         linePts.push(gp(GRID_ORIGIN_EU.x, ey), gp(GRID_ORIGIN_EU.x + spanX, ey));
       }
+      // The four lootable-PVP cells (C2, C3, D3, E2) get a faint red wash, so
+      // the hazard is legible at a glance rather than only from the seam colour
+      // and the label tint. Drawn first and behind everything else so markers
+      // and seams stay on top.
+      {
+        const cellSize = GRID_CELL_EU * scale;
+        const fillMat = new THREE.MeshBasicMaterial({
+          color: PVP_COLOR,
+          transparent: true,
+          opacity: GRID_PVP_FILL_OPACITY,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        });
+        for (const [c, r] of GRID_PVP_CELLS) {
+          const ex0 = GRID_ORIGIN_EU.x + c * GRID_CELL_EU;
+          const ey0 = GRID_ORIGIN_EU.y + r * GRID_CELL_EU;
+          const fill = new THREE.Mesh(new THREE.PlaneGeometry(cellSize, cellSize), fillMat);
+          // PlaneGeometry is built in XY; the map's ground plane is XZ.
+          fill.rotation.x = -Math.PI / 2;
+          fill.position.copy(gp(ex0 + GRID_CELL_EU / 2, ey0 + GRID_CELL_EU / 2));
+          fill.renderOrder = -3;
+          fill.updateMatrix();
+          fill.matrixAutoUpdate = false;
+          scene.add(fill);
+        }
+
+        // Sector names painted flat on the ecliptic, like markings on a pitch.
+        // Lying in the plane rather than facing the camera is the whole point:
+        // perspective foreshortens and shrinks them for free, so they read as
+        // part of the space instead of joining the label layer that was already
+        // crowded. Dimmed and drawn under everything else.
+        for (let c = 0; c < GRID_COLS; c++) {
+          for (let r = 0; r < GRID_ROWS; r++) {
+            const ref = cellRef(c, r);
+            const name = sectorNames.get(ref) ?? ref;
+            const pvp = GRID_PVP_CELLS.some(([pc, pr]) => pc === c && pr === r);
+            const { tex, aspect } = drawFloorText(
+              name.toUpperCase(),
+              pvp ? "#ff6b6b" : "#9fb2cc",
+            );
+            // Constant cap-height so every sector reads at the same size, only
+            // shrinking when a long name would overrun its cell.
+            let h = cellSize * SECTOR_LABEL_HEIGHT;
+            let w = h * aspect;
+            const maxW = cellSize * 0.85;
+            if (w > maxW) {
+              w = maxW;
+              h = w / aspect;
+            }
+            const mesh = new THREE.Mesh(
+              new THREE.PlaneGeometry(w, h),
+              new THREE.MeshBasicMaterial({
+                map: tex,
+                transparent: true,
+                opacity: SECTOR_LABEL_OPACITY,
+                depthWrite: false,
+                side: THREE.DoubleSide,
+              }),
+            );
+            mesh.rotation.x = -Math.PI / 2;
+            const ex0 = GRID_ORIGIN_EU.x + c * GRID_CELL_EU;
+            const ey0 = GRID_ORIGIN_EU.y + r * GRID_CELL_EU;
+            mesh.position.copy(
+              gp(ex0 + GRID_CELL_EU / 2, ey0 + GRID_CELL_EU * SECTOR_LABEL_EDGE),
+            );
+            mesh.renderOrder = -2;
+            mesh.updateMatrix();
+            mesh.matrixAutoUpdate = false;
+            scene.add(mesh);
+            sectorLabels.push(mesh);
+          }
+        }
+      }
+
+      // Seams get the PVP sphere's treatment — they mark the same hazard, since
+      // crossing an interior seam is what puts you in PVP. Two passes: a wide
+      // ribbon carrying the glow falloff, and a faint core on top so the seam
+      // stays locatable when zoomed out (the glow alone goes mushy at distance).
+      // Both are deliberately dim — see GRID_GLOW_INTENSITY.
+      const glow = new THREE.Mesh(
+        buildGlowRibbons(linePts, GRID_CELL_EU * scale * GRID_GLOW_WIDTH),
+        glowRibbonMaterial(PVP_COLOR, 2.6, GRID_GLOW_INTENSITY),
+      );
+      glow.matrixAutoUpdate = false;
+      glow.renderOrder = -1; // behind the markers, like the sphere
+      scene.add(glow);
+
       const gridLines = new THREE.LineSegments(
         new THREE.BufferGeometry().setFromPoints(linePts),
-        new THREE.LineBasicMaterial({ color: 0x2b3a55, transparent: true, opacity: 0.45, depthWrite: false }),
+        new THREE.LineBasicMaterial({
+          color: PVP_COLOR,
+          transparent: true,
+          opacity: 0.14,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
       );
       gridLines.matrixAutoUpdate = false;
       scene.add(gridLines);
 
-      // Cell labels (B2…E4); PvP cells tinted red.
-      for (let c = 0; c < GRID_COLS; c++) {
-        for (let r = 0; r < GRID_ROWS; r++) {
-          const ex0 = GRID_ORIGIN_EU.x + c * GRID_CELL_EU;
-          const ey0 = GRID_ORIGIN_EU.y + r * GRID_CELL_EU;
-          const pvp = GRID_PVP_CELLS.some(([pc, pr]) => pc === c && pr === r);
-          const lbl = makeLabel(GRID_COL_LETTERS[c] + GRID_ROW_NUMS[r], pvp ? "#ff5566" : "#4a6a90");
-          lbl.position.copy(gp(ex0 + GRID_CELL_EU / 2, ey0 + GRID_CELL_EU / 2));
-          lbl.userData.isLabel = true;
-          scene.add(lbl);
-          labels.push(lbl);
-        }
-      }
     }
 
 
@@ -463,12 +887,13 @@ export function MapView({
         );
         spinners.push({ o: mesh, ax: "z", sp: 0.8 });
       } else if (spacest) {
-        // Space station — dim core wrapped in a fresnel halo. 3× the belt markers.
+        // Space station — a solid orb, 3× the belt markers. The fresnel halo
+        // that used to wrap it read as a ring at distance and competed with the
+        // PVP sphere's rim for the same visual language.
         mesh = new THREE.Mesh(
           new THREE.SphereGeometry(radius * 3.15, 24, 24),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(0.32) }),
+          new THREE.MeshBasicMaterial({ color }),
         );
-        mesh.add(new THREE.Mesh(new THREE.SphereGeometry(radius * 4.65, 28, 28), fresnelMaterial(color, 2.2, 1.5)));
       } else if (zone) {
         // Outlaw-zone marker — hazard octahedron, additive glow.
         mesh = new THREE.Mesh(
@@ -497,6 +922,14 @@ export function MapView({
       }
       scene.add(mesh);
       pickable.push(mesh);
+      // Remember the resting colour so the depth pass can dim toward the
+      // background and restore exactly, without touching transparency (which
+      // would force sorting across hundreds of markers).
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      if (mat.color) mesh.userData.baseColor = mat.color.clone();
+      if (mat.transparent) mesh.userData.baseOpacity = mat.opacity;
+      mesh.userData.revealJitter = Math.random() * REVEAL_STAGGER_MS;
+      mesh.userData.depthCue = !(gate || zone || spacest); // big landmarks stay solid
       const objs: THREE.Object3D[] = [mesh];
 
       const label = labelFor(p);
@@ -506,6 +939,8 @@ export function MapView({
         spr.position.y += spacest ? 0.3 : 0.18;
         spr.userData.poiId = p.id;
         spr.userData.isLabel = true;
+        spr.userData.labelRange = LABEL_RANGE[p.category] ?? LABEL_RANGE_DEFAULT;
+        spr.userData.revealJitter = Math.random() * REVEAL_STAGGER_MS;
         scene.add(spr);
         objs.push(spr);
         labels.push(spr);
@@ -521,7 +956,7 @@ export function MapView({
     if (pvpZonePos.length) {
       const c = pvpZonePos.reduce((a, v) => a.add(v), new THREE.Vector3()).multiplyScalar(1 / pvpZonePos.length);
       const r = Math.max(...pvpZonePos.map((v) => v.distanceTo(c))) + 0.1;
-      const zoneMesh = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 32), fresnelMaterial(0xef4444, 3.0, 0.9));
+      const zoneMesh = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 32), fresnelMaterial(PVP_COLOR, 3.0, 0.9));
       zoneMesh.position.copy(c);
       scene.add(zoneMesh);
     }
@@ -592,7 +1027,7 @@ export function MapView({
     const arrowGeo = new THREE.ConeGeometry(0.055, 0.15, 4);
     arrowGeo.rotateX(Math.PI / 2); // apex → +Z (the heading direction)
     const arrow = new THREE.Mesh(arrowGeo, new THREE.MeshBasicMaterial({ color: pColor }));
-    const pLabel = makeLabel("YOU", "#ffd54a");
+    const pLabel = makeLabel("YOU", "#ffd54a", true);
     pLabel.position.y = 0.15;
     pLabel.userData.isLabel = true;
     labels.push(pLabel);
@@ -611,7 +1046,7 @@ export function MapView({
 
     // Midpoint readout drawn on the range line (distance · ETA). Registered as a
     // label so it holds a constant on-screen size and honours the size slider.
-    const measureLabel = makeLabel(" ", "#ffd54a");
+    const measureLabel = makeLabel(" ", "#ffd54a", true);
     measureLabel.visible = false;
     measureLabel.renderOrder = 1000;
     measureLabel.userData.pinned = true;
@@ -621,17 +1056,257 @@ export function MapView({
     // Interaction
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
+
+    // ── Sector drill-down ─────────────────────────────────────────────────
+    // The grid is a pick target in the overview: hover lights a cell, clicking
+    // flies the camera into it. Picking is a ray/plane solve against the
+    // ecliptic (y = 0) rather than raycasting geometry — no meshes needed and
+    // it works over empty space between markers.
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const groundHit = new THREE.Vector3();
+    const cellSizeW = GRID_CELL_EU * scale;
+
+    /** Cell under the pointer, or null when off-grid. */
+    const pickCell = (): { c: number; r: number } | null => {
+      if (!raycaster.ray.intersectPlane(groundPlane, groundHit)) return null;
+      // Invert euToThree: X = (eux-cx)*s and Z = -(euy-cy)*s.
+      const eux = groundHit.x / scale + center.x;
+      const euy = -groundHit.z / scale + center.y;
+      const c = Math.floor((eux - GRID_ORIGIN_EU.x) / GRID_CELL_EU);
+      const r = Math.floor((euy - GRID_ORIGIN_EU.y) / GRID_CELL_EU);
+      if (c < 0 || c >= GRID_COLS || r < 0 || r >= GRID_ROWS) return null;
+      return { c, r };
+    };
+
+    // One reusable quad parked over whichever cell is hovered.
+    const cellHighlight = new THREE.Mesh(
+      new THREE.PlaneGeometry(cellSizeW, cellSizeW),
+      new THREE.MeshBasicMaterial({
+        color: 0x8fd3ff,
+        transparent: true,
+        opacity: 0.07,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    cellHighlight.rotation.x = -Math.PI / 2;
+    cellHighlight.renderOrder = -2;
+    cellHighlight.visible = false;
+    scene.add(cellHighlight);
+    let hoverCell: { c: number; r: number } | null = null;
+
+    // Camera flight, lerped in the render loop. Any manual input cancels it so
+    // the controls never fight an animation mid-drag.
+    // 450ms sits under the Doherty threshold (past ~400ms waiting starts to
+    // register) and in the same family as the card's 220ms slide, so camera and
+    // UI motion read as one system rather than two.
+    const flight = {
+      t: 0,
+      dur: 0.45,
+      active: false,
+      fromPos: new THREE.Vector3(),
+      toPos: new THREE.Vector3(),
+      fromTgt: new THREE.Vector3(),
+      toTgt: new THREE.Vector3(),
+    };
+    // The pose the map opens at. Closing a sector flies back to exactly this,
+    // so "back to overview" always lands somewhere predictable rather than
+    // wherever you happened to have dragged to before drilling in.
+    const homePos = camera.position.clone();
+    const homeTgt = controls.target.clone();
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const flyTo = (pos: THREE.Vector3, tgt: THREE.Vector3) => {
+      // WCAG 2.3.3 — cut straight to the destination when motion is unwelcome.
+      if (reduceMotion) {
+        camera.position.copy(pos);
+        controls.target.copy(tgt);
+        controls.update();
+        flight.active = false;
+        flightEndsAtRef.current = 0; // arrived already; nothing to wait for
+        return;
+      }
+      flightEndsAtRef.current = performance.now() + flight.dur * 1000;
+      flight.fromPos.copy(camera.position);
+      flight.fromTgt.copy(controls.target);
+      flight.toPos.copy(pos);
+      flight.toTgt.copy(tgt);
+      flight.t = 0;
+      flight.active = true;
+    };
+
+    /** Frame a whole sector, keeping the current viewing angle. */
+    const focusSector = (c: number, r: number) => {
+      const ex0 = GRID_ORIGIN_EU.x + c * GRID_CELL_EU;
+      const ey0 = GRID_ORIGIN_EU.y + r * GRID_CELL_EU;
+      const tgt = euToThree(
+        ex0 + GRID_CELL_EU / 2,
+        ey0 + GRID_CELL_EU / 2,
+        center.z,
+        center,
+        scale,
+      );
+      const dir = camera.position.clone().sub(controls.target);
+      if (dir.lengthSq() < 1e-6) dir.set(0, 1, 0.6);
+      dir.normalize();
+      // Distance that frames one cell for this FOV, plus a margin.
+      const fit = (cellSizeW / 2) / Math.tan((camera.fov * Math.PI) / 360);
+      flyTo(tgt.clone().add(dir.multiplyScalar(fit * 1.25)), tgt);
+    };
+    flyHomeRef.current = () => flyTo(homePos, homeTgt);
     let down = { x: 0, y: 0 };
-    const onDown = (e: PointerEvent) => (down = { x: e.clientX, y: e.clientY });
+    // Any manual camera input abandons an in-flight animation, so a drag or a
+    // scroll never has to fight it.
+    // Right button doubles as "back": OrbitControls pans with it, so only a
+    // *static* right click counts — press and release without dragging. Same
+    // movement tolerance as the left-click test, so a pan that happens to end
+    // near where it started still isn't mistaken for a click.
+    let rightDown: { x: number; y: number } | null = null;
+    const onDown = (e: PointerEvent) => {
+      flight.active = false;
+      if (e.button === 2) rightDown = { x: e.clientX, y: e.clientY };
+      else down = { x: e.clientX, y: e.clientY };
+    };
+    const onUp = (e: PointerEvent) => {
+      if (e.button !== 2 || !rightDown) return;
+      const moved = (e.clientX - rightDown.x) ** 2 + (e.clientY - rightDown.y) ** 2 > 25;
+      rightDown = null;
+      if (!moved) closeLevelRef.current();
+    };
+    // Suppress the browser menu so the gesture is ours alone.
+    const onContextMenu = (e: Event) => e.preventDefault();
+    const onWheel = () => {
+      flight.active = false;
+    };
     // Fly the camera to a POI, keeping the current viewing angle.
     const focusTo = (mp: MapPoi) => {
       const target = euToThree(mp.euX, mp.euY, mp.euZ, center, scale);
       const dir = camera.position.clone().sub(controls.target);
       if (dir.lengthSq() < 1e-6) dir.set(0, 1, 0.001);
       dir.normalize();
-      controls.target.copy(target);
-      camera.position.copy(target).add(dir.multiplyScalar(compact ? 1.8 : 2.5));
-      controls.update();
+      flyTo(target.clone().add(dir.multiplyScalar(compact ? 1.8 : 2.5)), target);
+    };
+    // Shared with the marker list and the sector card, so every route to a POI
+    // moves the camera the same way.
+    flyToRef.current = flyTo;
+    // ── Hover ─────────────────────────────────────────────────────────────
+    // With labels on a range budget most markers are anonymous dots, so pointing
+    // at one has to name it — that's what keeps "find the thing, grab its
+    // waypoint" fast without putting every name on screen at once.
+    //
+    // The pointer handler only records where the cursor is; the actual pick runs
+    // once per frame from the render loop. Acting per `pointermove` meant a
+    // high-poll mouse could fire 120+ picks a second, each one competing with
+    // rendering for the same 16.7ms frame budget. Sampling instead of reacting
+    // decouples input rate from work done, and it also keeps hover correct while
+    // the camera moves under a stationary cursor.
+    const hoverRef = { current: null as string | null };
+    const ptr = { px: 0, py: 0, w: 1, h: 1, inside: false };
+    const onMove = (e: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      ptr.px = e.clientX - rect.left;
+      ptr.py = e.clientY - rect.top;
+      ptr.w = rect.width;
+      ptr.h = rect.height;
+      ptr.inside = true;
+    };
+
+    /**
+     * Nearest marker to the pointer in *screen* space, within a pixel radius.
+     *
+     * Fitts's law: these markers are sub-pixel-thin spheres at distance, so
+     * ray-hitting their actual geometry makes clicking a precision task. A pixel
+     * radius gives every marker the same forgiving target size no matter how far
+     * away it is, and it's cheaper than a raycast — a projection per marker, no
+     * BVH traversal.
+     */
+    const projV = new THREE.Vector3();
+    const pickMarker = (): string | null => {
+      let bestId: string | null = null;
+      let bestD = PICK_RADIUS_PX;
+      let bestDepth = Infinity;
+      const t = performance.now();
+      for (const m of pickable) {
+        if (!m.visible) continue; // hidden by filters or the overview
+        // Waiting on the camera to land — drawn at zero, so not yet a target.
+        const at = m.userData.revealAt as number | undefined;
+        if (at != null && at > t) continue;
+        m.getWorldPosition(projV);
+        const depth = camera.position.distanceTo(projV);
+        projV.project(camera);
+        if (projV.z > 1) continue; // behind the camera
+        const sx = (projV.x * 0.5 + 0.5) * ptr.w;
+        const sy = (-projV.y * 0.5 + 0.5) * ptr.h;
+        const d = Math.hypot(sx - ptr.px, sy - ptr.py);
+        if (d > PICK_RADIUS_PX) continue;
+        // Closest to the cursor wins; near-ties go to whatever is nearer the
+        // camera, so a foreground marker beats one behind it.
+        if (d < bestD - 1 || (d < bestD + 1 && depth < bestDepth)) {
+          bestD = Math.min(bestD, d);
+          bestDepth = depth;
+          bestId = (m.userData.poiId as string | undefined) ?? null;
+        }
+      }
+      return bestId;
+    };
+
+    // Hover feedback on the marker itself — without it the only confirmation is
+    // the cursor, which doesn't tell you *which* dot you're about to click.
+    let hoverMesh: THREE.Mesh | null = null;
+    const applyHoverScale = (id: string | null) => {
+      if (hoverMesh && hoverMesh.userData.poiId !== id) {
+        hoverMesh.scale.setScalar(markerScaleRef.current);
+        hoverMesh.updateMatrix(); // static markers have matrixAutoUpdate off
+        hoverMesh = null;
+      }
+      if (!id) return;
+      // Re-applied every frame rather than only on change: the marker-size
+      // slider rescales every marker, which would otherwise flatten the hovered
+      // one until the cursor moved off it.
+      const m = hoverMesh ?? pickable.find((x) => x.userData.poiId === id);
+      if (!m) return;
+      m.scale.setScalar(markerScaleRef.current * HOVER_SCALE);
+      m.updateMatrix();
+      hoverMesh = m;
+    };
+
+    const updateHover = () => {
+      if (!ptr.inside) return;
+      const id = pickMarker();
+      hoverRef.current = id;
+      applyHoverScale(id);
+
+      // The grid stays pickable in both modes, so you can hop straight from one
+      // sector to another without backing out first. A marker under the pointer
+      // still wins, since clicking it should select rather than drill in. The
+      // sector you're already in doesn't highlight — there's nothing to go to.
+      mouse.x = (ptr.px / ptr.w) * 2 - 1;
+      mouse.y = -(ptr.py / ptr.h) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const cur = sectorRef.current;
+      const over = id ? null : pickCell();
+      hoverCell = over && !(cur && cur.c === over.c && cur.r === over.r) ? over : null;
+      if (hoverCell) {
+        const ex0 = GRID_ORIGIN_EU.x + hoverCell.c * GRID_CELL_EU;
+        const ey0 = GRID_ORIGIN_EU.y + hoverCell.r * GRID_CELL_EU;
+        cellHighlight.position.copy(
+          euToThree(ex0 + GRID_CELL_EU / 2, ey0 + GRID_CELL_EU / 2, center.z, center, scale),
+        );
+        cellHighlight.visible = true;
+      } else {
+        cellHighlight.visible = false;
+      }
+      renderer.domElement.style.cursor = id || hoverCell ? "pointer" : "";
+    };
+
+    const onLeave = () => {
+      ptr.inside = false;
+      hoverRef.current = null;
+      applyHoverScale(null);
+      hoverCell = null;
+      cellHighlight.visible = false;
+      renderer.domElement.style.cursor = "";
     };
     const onClick = (e: MouseEvent) => {
       if ((e.clientX - down.x) ** 2 + (e.clientY - down.y) ** 2 > 25) return;
@@ -642,31 +1317,82 @@ export function MapView({
 
       // Clicking a POI (its label sits on top, so test labels first, else the
       // marker) focuses it and kicks off the measure flow via `selected`.
-      const labelHit = raycaster.intersectObjects(labels).find((h) => h.object.userData.poiId);
-      const dotHit = raycaster.intersectObjects(pickable)[0];
-      const id = (labelHit?.object.userData.poiId ?? dotHit?.object.userData.poiId) as
-        | string
-        | undefined;
+      // Same screen-space picker the hover uses, so what lights up under the
+      // cursor is always what a click selects. Labels sit offset above their
+      // marker, so they still need a ray of their own.
+      ptr.px = e.clientX - rect.left;
+      ptr.py = e.clientY - rect.top;
+      ptr.w = rect.width;
+      ptr.h = rect.height;
+      const labelHit = raycaster
+        .intersectObjects(labels)
+        .find((h) => h.object.visible && h.object.userData.poiId);
+      const id = (pickMarker() ?? labelHit?.object.userData.poiId) as string | undefined;
       if (id) {
         const mp = pois.find((p) => p.id === id);
         if (mp) {
           focusTo(mp);
           setSelected(mp);
+          // Drilling in via a marker: the sector it sits in becomes the active
+          // one, so its detail and dossier come up just as if the cell had been
+          // clicked. Skipped when it's already active, so nothing re-reveals.
+          const cl = cellOfPoi(mp);
+          const cur = sectorRef.current;
+          if (cl && !(cur && cur.c === cl.c && cur.r === cl.r)) setSector(cl);
         }
-      } else setSelected(null);
+        return;
+      }
+      // No marker under the pointer: a click on the grid drills into that
+      // sector, from the overview or from another sector. Clicking empty space
+      // inside the sector you're already in just clears the selection, so
+      // dismissing a detail panel can't throw the camera around.
+      const cell = pickCell();
+      const cur = sectorRef.current;
+      if (cell && !(cur && cur.c === cell.c && cur.r === cell.r)) {
+        focusSector(cell.c, cell.r);
+        setSector(cell);
+        setSelected(null);
+        hoverCell = null;
+        cellHighlight.visible = false;
+        return;
+      }
+      setSelected(null);
     };
     renderer.domElement.addEventListener("pointerdown", onDown);
     renderer.domElement.addEventListener("click", onClick);
+
+    renderer.domElement.addEventListener("pointerup", onUp);
+    renderer.domElement.addEventListener("contextmenu", onContextMenu);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: true });
+    renderer.domElement.addEventListener("pointermove", onMove);
+    renderer.domElement.addEventListener("pointerleave", onLeave);
 
     let raf = 0;
     const start = performance.now();
     let prev = start;
     const tmpV = new THREE.Vector3();
+    const camDir = new THREE.Vector3();
     const loop = () => {
       raf = requestAnimationFrame(loop);
       const now = performance.now();
       const dt = Math.min((now - prev) / 1000, 0.05);
       prev = now;
+
+      // One hover pick per frame, regardless of how fast the mouse reports.
+      updateHover();
+
+      // Sector flight. Ease-in-out over `dur`, driving both camera and pivot so
+      // the controls stay consistent when it lands.
+      if (flight.active) {
+        flight.t = Math.min(flight.t + dt / flight.dur, 1);
+        const e = flight.t < 0.5
+          ? 4 * flight.t ** 3
+          : 1 - Math.pow(-2 * flight.t + 2, 3) / 2;
+        camera.position.lerpVectors(flight.fromPos, flight.toPos, e);
+        controls.target.lerpVectors(flight.fromTgt, flight.toTgt, e);
+        if (flight.t >= 1) flight.active = false;
+      }
+
       controls.update();
       for (const sp of spinners) sp.o.rotation[sp.ax] += sp.sp * dt;
       if (playerGroup.visible) {
@@ -674,14 +1400,92 @@ export function MapView({
         arrow.scale.setScalar(1 + Math.sin(t * 3) * 0.1);
       }
 
+      // Sector names fade out as the camera drops toward the plane: flat text
+      // seen edge-on is unreadable smear, and that's exactly when you're down
+      // among the rocks and don't want it anyway. |dir.y| is 1 looking straight
+      // down, 0 looking level.
+      if (sectorLabels.length) {
+        camera.getWorldDirection(camDir);
+        const a = THREE.MathUtils.smoothstep(Math.abs(camDir.y), 0.1, 0.42);
+        for (const m of sectorLabels) {
+          const mat = m.material as THREE.MeshBasicMaterial;
+          mat.opacity = SECTOR_LABEL_OPACITY * a;
+          m.visible = mat.opacity > 0.01;
+        }
+      }
+
+      // ── Depth cue ────────────────────────────────────────────────────────
+      // Distances are measured against the camera-to-pivot distance, so the
+      // effect is relative to what you're looking at and survives any zoom.
+      const focal = Math.max(camera.position.distanceTo(controls.target), 0.001);
+      const near = focal * DEPTH_NEAR;
+      const far = focal * DEPTH_FAR;
+      /** 1 at/inside the focal depth → 0 well behind it. */
+      const depthT = (d: number) =>
+        far <= near ? 1 : 1 - THREE.MathUtils.clamp((d - near) / (far - near), 0, 1);
+
+      /**
+       * 0 → 1 over REVEAL_MS after an object was revealed, smoothstepped, with
+       * its own stagger applied first. Returns 1 for anything not mid-fade, and
+       * clears the stamp on completion so finished markers cost nothing.
+       */
+      const revealOf = (o: THREE.Object3D): number => {
+        const at = o.userData.revealAt as number | undefined;
+        if (at == null) return 1;
+        const t = (now - at - ((o.userData.revealJitter as number) ?? 0)) / REVEAL_MS;
+        if (t >= 1) {
+          o.userData.revealAt = undefined;
+          return 1;
+        }
+        if (t <= 0) return 0;
+        return t * t * (3 - 2 * t);
+      };
+
+      for (const m of pickable) {
+        if (!m.visible) continue;
+        const rev = revealOf(m);
+        const cue = m.userData.depthCue as boolean;
+        // Settled and not depth-cued → nothing changes frame to frame.
+        if (rev >= 1 && !cue) continue;
+        const mat = m.material as THREE.MeshBasicMaterial;
+        // Transparent markers (outlaw zones, gates) fade on alpha; opaque ones
+        // fade their colour toward the background, which avoids switching
+        // materials to transparent mid-flight and forcing a shader recompile.
+        const baseOp = m.userData.baseOpacity as number | undefined;
+        if (baseOp != null) mat.opacity = baseOp * rev;
+        const base = m.userData.baseColor as THREE.Color | undefined;
+        if (base) {
+          let f = rev;
+          if (cue) {
+            m.getWorldPosition(tmpV);
+            f *= DEPTH_MIN + (1 - DEPTH_MIN) * depthT(camera.position.distanceTo(tmpV));
+          }
+          mat.color.copy(base).multiplyScalar(f);
+        }
+      }
+
       // Labels: hold a constant on-screen size at every zoom (distance × factor
-      // cancels perspective). No overlap culling — labels stay put (no flicker).
+      // cancels perspective), but fade and drop out with depth so the scene
+      // reads as a volume rather than a flat wall of names. Each category has a
+      // range beyond which its label isn't worth the ink (see LABEL_RANGE);
+      // hovering a marker always brings its own name back.
+      const hoverId = hoverRef.current;
       for (const lb of labels) {
         if (lb.parent === playerGroup && !playerGroup.visible) continue;
         if (!lb.userData.pinned) lb.visible = !lb.userData.filteredHidden;
         if (!lb.visible) continue;
         lb.getWorldPosition(tmpV);
-        const s = Math.max(camera.position.distanceTo(tmpV) * labelSizeRef.current, 0.01);
+        const dist = camera.position.distanceTo(tmpV);
+        const forced = lb.userData.pinned || lb.userData.poiId === hoverId;
+        const range = (lb.userData.labelRange as number) ?? Infinity;
+        if (!forced && dist > range) {
+          lb.visible = false;
+          continue;
+        }
+        const mat = lb.material as THREE.SpriteMaterial;
+        const depthOp = forced ? 1 : DEPTH_MIN_LABEL + (1 - DEPTH_MIN_LABEL) * depthT(dist);
+        mat.opacity = depthOp * revealOf(lb);
+        const s = Math.max(dist * labelSizeRef.current, 0.01);
         const a = (lb.userData.aspect as number) ?? 3;
         lb.scale.set(a * s, s, 1);
       }
@@ -691,11 +1495,20 @@ export function MapView({
     loop();
 
     const onResize = () => {
-      camera.aspect = mount.clientWidth / mount.clientHeight;
+      const w = mount.clientWidth;
+      const h = mount.clientHeight;
+      if (!w || !h) return; // hidden / zero-sized — keep the last good size
+      camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(mount.clientWidth, mount.clientHeight);
+      renderer.setSize(w, h);
     };
     window.addEventListener("resize", onResize);
+    // The container resizes without the window doing so — collapsing the rail,
+    // the page gutter changing, or layout settling after first paint. A window
+    // listener alone leaves the canvas at its mount-time size, which is what
+    // left dead space along the bottom and right edges.
+    const ro = new ResizeObserver(onResize);
+    ro.observe(mount);
 
     // Fresh scene → drop any teammate markers from the previous one; the
     // presence effect re-adds them against this scene.
@@ -715,16 +1528,22 @@ export function MapView({
       measureLabel,
       dispose: () => {
         cancelAnimationFrame(raf);
+        ro.disconnect();
         window.removeEventListener("resize", onResize);
         renderer.domElement.removeEventListener("pointerdown", onDown);
         renderer.domElement.removeEventListener("click", onClick);
+        renderer.domElement.removeEventListener("pointerup", onUp);
+        renderer.domElement.removeEventListener("contextmenu", onContextMenu);
+        renderer.domElement.removeEventListener("wheel", onWheel);
+        renderer.domElement.removeEventListener("pointermove", onMove);
+        renderer.domElement.removeEventListener("pointerleave", onLeave);
         controls.dispose();
         renderer.dispose();
         if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
       },
     };
     return () => sceneRef.current?.dispose();
-  }, [pois]);
+  }, [pois, sectorNames]);
 
   // Place the "YOU" marker at the freshly captured position (falling back to the
   // last watcher position) and, when measuring, draw the range line to the POI.
@@ -879,18 +1698,83 @@ export function MapView({
   useEffect(() => {
     const data = sceneRef.current;
     if (!data) return;
+    const now = performance.now();
+    // Markers become visible immediately but sit at zero brightness until the
+    // camera arrives — so they can't be seen streaking past during the flight.
+    const revealFrom = Math.max(now, flightEndsAtRef.current);
     for (const p of pois) {
-      const visible = !hidden.has(filterGroupOf(p));
+      // Two gates: the user's own type filters, and the view mode. The overview
+      // draws destinations only, so the belt reads as a handful of places to go
+      // rather than a field of rocks. A focused sector draws everything inside
+      // that cell and nothing outside it — that containment is the whole point
+      // of drilling in, and without it focusing just dumped the entire belt back
+      // on screen.
+      const cell = sector ? cellOfPoi(p) : null;
+      const inView = sector
+        ? cell != null && cell.c === sector.c && cell.r === sector.r
+        : OVERVIEW_CATEGORIES.has(p.category);
+      const visible = !hidden.has(filterGroupOf(p)) && inView;
       data.meshes.get(p.id)?.forEach((o) => {
         // Labels are owned by the render loop's collision pass — flag them here
         // rather than forcing visibility, so filtering + culling don't fight.
-        if (o.userData.isLabel) o.userData.filteredHidden = !visible;
-        else o.visible = visible;
+        if (o.userData.isLabel) {
+          // Only stamp on a false → true edge, so re-running this effect for an
+          // unrelated reason can't restart a fade that already finished.
+          if (visible && o.userData.filteredHidden) o.userData.revealAt = revealFrom;
+          o.userData.filteredHidden = !visible;
+        } else {
+          if (visible && !o.visible) o.userData.revealAt = revealFrom;
+          o.visible = visible;
+        }
       });
     }
-  }, [pois, hidden]);
+  }, [pois, hidden, sector]);
 
-  const loggedCount = store.items.length;
+  const loggedCount = poiStore.items.filter((p) => p.logged_at != null).length;
+  const sectorTitle = sector ? sectorNames.get(cellRef(sector.c, sector.r)) ?? "" : "";
+
+  /**
+   * Back out one level — selection first, then the sector. Shared by Esc, the
+   * card's ✕ and a static right click, so every route unwinds identically.
+   * Held in a ref because the scene's pointer handlers outlive any one render.
+   */
+  const closeLevelRef = useRef<() => void>(() => {});
+
+  /** Leave the focused sector and scale back out to the overview. */
+  const exitSector = () => {
+    setSector(null);
+    setSelected(null);
+    flyHomeRef.current?.();
+  };
+
+  closeLevelRef.current = () => {
+    if (selected) setSelected(null);
+    else if (sector) exitSector();
+  };
+
+  /** POIs inside the focused sector, for the dossier card. */
+  const sectorPois = useMemo(() => {
+    if (!sector) return [];
+    return poiStore.items.filter((p) => {
+      const cl = cellOfEu(p.eu_x, p.eu_y);
+      return cl != null && cl.c === sector.c && cl.r === sector.r;
+    });
+  }, [poiStore.items, sector]);
+
+  // Esc backs out of a sector to the overview.
+  useEffect(() => {
+    if (!sector) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Same unwind order as the card's ✕: drop a selection first, and only
+      // leave the sector once there's nothing selected to back out of.
+      if (selected) setSelected(null);
+      else exitSector();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sector, selected]);
 
   // Fly the map camera to a POI (keeping the current view angle) and open it.
   const focusPoi = (poi: Poi) => {
@@ -900,11 +1784,20 @@ export function MapView({
     const dir = d.camera.position.clone().sub(d.controls.target);
     if (dir.lengthSq() < 1e-6) dir.set(0, 1, 1);
     dir.normalize();
-    d.controls.target.copy(p);
-    d.camera.position.copy(p).add(dir.multiplyScalar(2.5));
-    d.controls.update();
+    const pos = p.clone().add(dir.multiplyScalar(2.5));
+    if (flyToRef.current) {
+      flyToRef.current(pos, p);
+    } else {
+      d.controls.target.copy(p);
+      d.camera.position.copy(pos);
+      d.controls.update();
+    }
     setSelected(pois.find((mp) => mp.id === poi.id) ?? null);
+    // Same rule as clicking a marker on the map — the POI's sector becomes active.
+    const cl = cellOfEu(poi.eu_x, poi.eu_y);
+    if (cl && !(sector && sector.c === cl.c && sector.r === cl.r)) setSector(cl);
   };
+
 
   // Live player coords for the minimap readout (last-known watcher position).
   const coords = playerPos ? { x: playerPos.x, y: playerPos.y, z: playerPos.z } : null;
@@ -1046,6 +1939,17 @@ export function MapView({
         <>
           <div className="maptools">
             <div className="maptools__stats">
+              {sector ? (
+                <button
+                  className="mtchip mtchip--back"
+                  onClick={exitSector}
+                  title="Back to all sectors (Esc)"
+                >
+                  ← <b>{sectorTitle}</b>
+                </button>
+              ) : (
+                <span className="mtchip mtchip--hint">Click a sector to focus</span>
+              )}
               <span className="mtchip">
                 <b>{pois.filter(isBareM).length}</b> belt
               </span>
@@ -1081,7 +1985,18 @@ export function MapView({
             </button>
           </div>
 
-          <MapDetail poi={selected} onClose={() => setSelected(null)} onDelete={store.remove} />
+          {sector && (
+            <SectorCard
+              name={sectorTitle}
+              cell={cellRef(sector.c, sector.r)}
+              pvp={GRID_PVP_CELLS.some(([pc, pr]) => pc === sector.c && pr === sector.r)}
+              pois={sectorPois}
+              selected={selected}
+              onClose={exitSector}
+              onClearSelection={() => setSelected(null)}
+              onFocus={focusPoi}
+            />
+          )}
 
           <div className="mapfilters">
             <div className="mapfilters__head">
@@ -1142,7 +2057,11 @@ export function MapView({
 
           {modal === "pois" && (
             <MapModal title="POIs" onClose={() => setModal(null)} wide>
-              <PoiEditor poiStore={poiStore} onFocus={focusPoi} />
+              <PoiEditor
+                poiStore={poiStore}
+                mobStore={mobStore}
+                onFocus={focusPoi}
+              />
             </MapModal>
           )}
         </>

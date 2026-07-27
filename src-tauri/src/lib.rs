@@ -2,12 +2,12 @@
 //! chat.log tail that streams new lines to the UI. Everything heavier (asteroid
 //! logging, maps, clan sync) lands in later increments.
 
-mod asteroids;
 mod auctions;
 mod auth;
 mod combat;
 mod ec;
 mod em;
+mod forum;
 mod input;
 mod nexus;
 mod ocr;
@@ -56,7 +56,6 @@ struct AppState {
     /// The chat.log path the live watcher resolved, so status can be queried
     /// (not just inferred from a `watch:status` event that may predate a mount).
     watch_path: Mutex<Option<String>>,
-    asteroids: asteroids::AsteroidStore,
     pois: poi::PoiStore,
     capture: Mutex<CaptureMeta>,
     /// Live combat/hunt tracker state.
@@ -696,6 +695,44 @@ fn auction_last_calls() -> Result<Vec<auctions::Auction>, String> {
     auctions::last_calls()
 }
 
+/// Newest forum topics. `category` scopes to one board — 108 is Space.
+#[tauri::command]
+fn forum_latest(category: Option<i64>, page: Option<u32>) -> Result<Vec<forum::Topic>, String> {
+    forum::latest(category, page.unwrap_or(0))
+}
+
+/// Read a thread. Capped so a 20-year-old 3,000-post trading thread can't stall
+/// the UI on a single call.
+#[tauri::command]
+fn forum_topic(id: i64, max_posts: Option<usize>) -> Result<Vec<forum::Post>, String> {
+    forum::topic(id, max_posts.unwrap_or(60))
+}
+
+/// Search the archive. Supports Discourse syntax: `@user`, `#category:sub`,
+/// `after:YYYY-MM-DD`, `in:title`.
+#[tauri::command]
+fn forum_search(query: String) -> Result<Vec<forum::Topic>, String> {
+    forum::search(&query)
+}
+
+/// Scout an avatar's forum history — pairs with `ec_avatar` in the scout popover.
+#[tauri::command]
+fn forum_user(name: String) -> forum::ForumUser {
+    forum::user(&name)
+}
+
+/// Site-wide recent posts, for the forum feed panel.
+#[tauri::command]
+fn forum_recent() -> Result<Vec<forum::Post>, String> {
+    forum::recent_posts()
+}
+
+/// The boards offered as filter tabs — ids live in Rust, not scattered in TS.
+#[tauri::command]
+fn forum_boards() -> Vec<serde_json::Value> {
+    forum::boards()
+}
+
 /// Short type code for auto-naming an unlabelled rock.
 fn short_code(category: &str) -> &'static str {
     match category {
@@ -799,7 +836,7 @@ fn try_ocr_meta(app: &AppHandle) -> Option<(String, String)> {
 /// Capture the player's position and log it as a rock. Name + type come from the
 /// OCR capture box when it's open, else the stored manual label. Shared by the
 /// button, the panel, and the hotkey.
-fn log_at_position(app: &AppHandle, state: &AppState) -> Result<asteroids::Asteroid, String> {
+fn log_at_position(app: &AppHandle, state: &AppState) -> Result<poi::Poi, String> {
     // OCR the target panel first — the game keeps showing it regardless of focus.
     let ocr = try_ocr_meta(app);
     let coords = capture_coords(state)?;
@@ -817,7 +854,10 @@ fn log_at_position(app: &AppHandle, state: &AppState) -> Result<asteroids::Aster
         }
     };
 
-    let rock = state.asteroids.add(asteroids::AsteroidInput {
+    // Logged rocks live in the POI store like every other marker — `add_logged`
+    // stamps the log time, which is what distinguishes them from hand-placed
+    // anchors now that there is only one store.
+    let rock = state.pois.add_logged(poi::PoiInput {
         name,
         category,
         sector: None,
@@ -827,7 +867,7 @@ fn log_at_position(app: &AppHandle, state: &AppState) -> Result<asteroids::Aster
         pvp_lootable: false,
         notes: None,
     })?;
-    let _ = app.emit("asteroids:changed", ());
+    let _ = app.emit("pois:changed", ());
     let _ = app.emit("asteroid:logged", &rock);
     Ok(rock)
 }
@@ -837,7 +877,7 @@ fn log_at_position(app: &AppHandle, state: &AppState) -> Result<asteroids::Aster
 fn capture_and_log(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<asteroids::Asteroid, String> {
+) -> Result<poi::Poi, String> {
     log_at_position(&app, &state)
 }
 
@@ -1096,32 +1136,6 @@ fn read_trade_region(app: AppHandle) -> Result<String, String> {
     read_window_region(&app, "tradecap")
 }
 
-/// All logged asteroids, newest first.
-#[tauri::command]
-fn list_asteroids(state: State<'_, AppState>) -> Vec<asteroids::Asteroid> {
-    state.asteroids.list()
-}
-
-/// Log a new asteroid; returns the stored record.
-#[tauri::command]
-fn add_asteroid(
-    input: asteroids::AsteroidInput,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<asteroids::Asteroid, String> {
-    let rock = state.asteroids.add(input)?;
-    let _ = app.emit("asteroids:changed", ());
-    Ok(rock)
-}
-
-/// Delete a logged asteroid by id.
-#[tauri::command]
-fn delete_asteroid(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    state.asteroids.remove(&id)?;
-    let _ = app.emit("asteroids:changed", ());
-    Ok(())
-}
-
 /// All editable POIs (stations / gates / landmarks / custom).
 #[tauri::command]
 fn list_pois(state: State<'_, AppState>) -> Vec<poi::Poi> {
@@ -1235,7 +1249,6 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 watching: Mutex::new(Arc::new(AtomicBool::new(false))),
                 watch_path: Mutex::new(None),
-                asteroids: asteroids::AsteroidStore::open(dir.join("asteroids.json")),
                 pois: poi::PoiStore::open(dir.join("pois.json")),
                 capture: Mutex::new(CaptureMeta::default()),
                 combat: combat::CombatState::default(),
@@ -1249,6 +1262,11 @@ pub fn run() {
             // Start the always-on EntropiaCentral intel client (universe-wide
             // globals + trades). Independent of the local chat.log watcher.
             ec::start(app.handle().clone());
+
+            // Forum watcher: polls the Discourse firehose and emits `forum:post`
+            // for anything new. Low traffic (~75 posts/day), so this is a cheap
+            // 90s poll rather than a long-poll subscription.
+            forum::start(app.handle().clone());
 
             // Keep the Codex's Nexus indices fresh: rebuild from live Nexus when
             // the on-disk snapshot is missing or past its daily TTL. Checks on
@@ -1430,9 +1448,6 @@ pub fn run() {
             session_current,
             session_save,
             session_delete,
-            list_asteroids,
-            add_asteroid,
-            delete_asteroid,
             list_pois,
             add_poi,
             update_poi,
@@ -1452,6 +1467,12 @@ pub fn run() {
             ec_avatar,
             ec_media,
             auction_last_calls,
+            forum_latest,
+            forum_topic,
+            forum_search,
+            forum_user,
+            forum_recent,
+            forum_boards,
             toggle_dock,
             set_broadcast,
             get_broadcast,

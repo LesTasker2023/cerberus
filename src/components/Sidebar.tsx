@@ -11,6 +11,7 @@ export type Page =
   | "map"
   | "codex"
   | "media"
+  | "forum"
   | "clan"
   | "delboy"
   | "arb"
@@ -54,6 +55,7 @@ export function Sidebar({
         { page: "delboy", label: "DelBoy", icon: <IconGavel /> },
         { page: "arb", label: "Arb Board", icon: <IconArb /> },
         { page: "media", label: "Media", icon: <IconMedia /> },
+        { page: "forum", label: "Forum", icon: <IconForum /> },
       ],
     },
     {
@@ -268,6 +270,14 @@ function IconMedia() {
     <svg {...S}>
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path d="M10 9.2v5.6l4.5-2.8z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconForum() {
+  return (
+    <svg {...S}>
+      <path d="M4 5h13a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
+      <path d="M7 9h7M7 12h4" />
     </svg>
   );
 }

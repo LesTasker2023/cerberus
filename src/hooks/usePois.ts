@@ -15,6 +15,8 @@ export interface Poi {
   notes: string | null;
   /** Sector this POI is anchored to — named after a space station. */
   sector: string | null;
+  /** ISO time this marker was logged in-game; null = hand-placed anchor. */
+  logged_at: string | null;
 }
 
 export interface PoiInput {
@@ -28,7 +30,11 @@ export interface PoiInput {
   sector: string | null;
 }
 
-/** Editable POIs (stations / gates / landmarks / custom) — list + CRUD. */
+/**
+ * Every map marker — stations, gates, outlaw zones, landmarks and logged rocks.
+ * One store: `logged_at` distinguishes a rock scanned in-game from a marker
+ * placed by hand, replacing the separate asteroid log that could never be edited.
+ */
 export function usePois() {
   const [items, setItems] = useState<Poi[]>([]);
 

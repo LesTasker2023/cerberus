@@ -1,8 +1,12 @@
 import { useMemo, useState } from "react";
 import type { usePois, Poi } from "../hooks/usePois";
+import type { useEncounters } from "../hooks/useEncounters";
 import { IconTrash } from "./icons";
 
-// Creatable POI categories, grouped to match the map's filter buckets.
+// Creatable POI categories, grouped to match the map's filter buckets. The
+// asteroid types are here because the Howling Mine survey uses them — without
+// them those rows couldn't be re-typed, and editing one would silently coerce
+// it to "player".
 const CATS = [
   { key: "player", label: "Player" },
   { key: "mob", label: "Mob Zone" },
@@ -10,6 +14,12 @@ const CATS = [
   { key: "warp-gate", label: "Warp Gate" },
   { key: "outlaw-zone", label: "Outlaw Zone" },
   { key: "landmark", label: "Landmark (Misc)" },
+  { key: "asteroid-m", label: "Asteroid — M-Type" },
+  { key: "asteroid-c", label: "Asteroid — C-Type" },
+  { key: "asteroid-s", label: "Asteroid — S-Type" },
+  { key: "asteroid-f", label: "Asteroid — F-Type" },
+  { key: "asteroid-nd", label: "Asteroid — ND-Type" },
+  { key: "asteroid-scrap", label: "Asteroid — Scrap" },
 ];
 
 /** Parse `[Space, 58265, 69229, -804, Waypoint]` → coords (+ optional name). */
@@ -24,11 +34,19 @@ function parseCoords(text: string): { x: number; y: number; z: number; name?: st
 
 const EMPTY = { name: "", category: "player", x: "", y: "", z: "", pvp: false, notes: "", sector: "" };
 
+/** A row in the single list — either a real POI or a mob encounter's map dot. */
+type Row =
+  | { kind: "poi"; id: string; name: string; category: string; sector: string | null; logged: boolean; poi: Poi }
+  | { kind: "mob"; id: string; name: string; category: string; sector: null; logged: false };
+
 export function PoiEditor({
   poiStore,
+  mobStore,
   onFocus,
 }: {
   poiStore: ReturnType<typeof usePois>;
+  /** Mob encounters also draw on the map, so they appear in this list too. */
+  mobStore?: ReturnType<typeof useEncounters>;
   /** Fired when a POI row is clicked — the map flies to it. */
   onFocus?: (poi: Poi) => void;
 }) {
@@ -51,10 +69,40 @@ export function PoiEditor({
     [items],
   );
 
+  // Everything the map draws, in one list — POIs (including logged rocks) and
+  // the mob encounter dots.
+  const rows = useMemo<Row[]>(() => {
+    const pois: Row[] = items.map((p) => ({
+      kind: "poi",
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      sector: p.sector,
+      logged: p.logged_at != null,
+      poi: p,
+    }));
+    const mobs: Row[] = (mobStore?.items ?? [])
+      .filter((m) => m.eu_x != null && m.eu_y != null && m.eu_z != null)
+      .map((m) => ({
+        kind: "mob",
+        id: m.id,
+        name: m.name || "Mob",
+        category: "mob-encounter",
+        sector: null,
+        logged: false,
+      }));
+    return [...pois, ...mobs];
+  }, [items, mobStore?.items]);
+
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return items
-      .filter((p) => (!q || p.name.toLowerCase().includes(q)) && (catFilter === "all" || p.category === catFilter))
+    return rows
+      .filter((p) => {
+        if (q && !p.name.toLowerCase().includes(q)) return false;
+        if (catFilter === "all") return true;
+        if (catFilter === "logged") return p.kind === "poi" && p.logged;
+        return p.category === catFilter;
+      })
       .sort((a, b) => {
         if (sort === "category") return a.category.localeCompare(b.category) || a.name.localeCompare(b.name);
         if (sort === "sector") {
@@ -65,7 +113,7 @@ export function PoiEditor({
         }
         return a.name.localeCompare(b.name);
       });
-  }, [items, search, catFilter, sort]);
+  }, [rows, search, catFilter, sort]);
 
   const set = (patch: Partial<typeof f>) => setF((prev) => ({ ...prev, ...patch }));
 
@@ -135,8 +183,8 @@ export function PoiEditor({
   return (
     <div className="poied">
       <div className="poied__head">
-        <span className="poied__title">POIs</span>
-        <span className="poied__count">{items.length}</span>
+        <span className="poied__title">Map markers</span>
+        <span className="poied__count">{rows.length}</span>
       </div>
 
       <input
@@ -150,6 +198,8 @@ export function PoiEditor({
       <div className="poied__controls">
         <select className="input poied__ctl" value={catFilter} onChange={(e) => setCatFilter(e.target.value)}>
           <option value="all">All types</option>
+          <option value="logged">Logged rocks</option>
+          <option value="mob-encounter">Mob encounters</option>
           {CATS.map((c) => (
             <option key={c.key} value={c.key}>
               {c.label}
@@ -169,32 +219,43 @@ export function PoiEditor({
 
       <div className="poied__list">
         {shown.length === 0 ? (
-          <p className="poied__empty">{items.length === 0 ? "No POIs yet." : "No matches."}</p>
+          <p className="poied__empty">{rows.length === 0 ? "Nothing on the map yet." : "No matches."}</p>
         ) : (
           shown.map((p) => (
-            <div key={p.id} className={`poirow ${editId === p.id ? "poirow--on" : ""}`}>
+            <div key={`${p.kind}-${p.id}`} className={`poirow ${editId === p.id ? "poirow--on" : ""}`}>
               <button
                 className="poirow__main"
                 onClick={() => {
+                  if (p.kind !== "poi") return;
                   edit(p.id);
-                  onFocus?.(p);
+                  onFocus?.(p.poi);
                 }}
-                title="Focus on map + edit"
+                title={p.kind === "poi" ? "Focus on map + edit" : "Hunt record — edit it on Observations"}
               >
                 <span className="poirow__name">{p.name}</span>
                 <span className="poirow__cat">
-                  {p.category.replace("asteroid-", "").replace("-", " ")}
+                  {p.kind === "mob"
+                    ? "mob encounter"
+                    : p.category.replace("asteroid-", "").replace("-", " ")}
+                  {p.logged && <span className="poirow__sector">logged</span>}
                   {p.sector && <span className="poirow__sector">{p.sector}</span>}
                 </span>
               </button>
               <button
                 className="icobtn icobtn--del"
                 onClick={() => {
+                  // A mob row is a view of a hunt record — say so before it goes.
+                  if (p.kind === "mob") {
+                    if (!confirm(`Delete the "${p.name}" encounter?\n\nThis removes the hunt record itself — its loot, skills and damage — not just the map marker.`))
+                      return;
+                    mobStore?.remove(p.id);
+                    return;
+                  }
                   remove(p.id);
                   if (editId === p.id) reset();
                 }}
                 aria-label="Delete"
-                title="Delete"
+                title={p.kind === "mob" ? "Delete this hunt record" : "Delete"}
               >
                 <IconTrash />
               </button>
