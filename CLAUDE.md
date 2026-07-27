@@ -63,42 +63,39 @@ porting delta's `models/` layer (unverified coloring per-click premise).
 - No `console.log` in commits. Conventional commit prefixes. End commit messages with the Co-Authored-By trailer.
 - See `AUDIT.md` for the vanity-engineering audit (RCR 3/10) and the open items: MapView god-component (383-line effect), 4× duplicated JSON store boilerplate (`asteroids/poi/sessions/combat.rs` → a generic `JsonStore<T>` is justified), `lib.rs` as a god module (commands should move beside their domain modules).
 
-## ⚠️ PICK UP HERE (2026-07-27)
+## Notes (2026-07-27)
 
-**v0.8.0 is released and the Sector Map is broken in that build.** Fix is written
-and compiled but **NOT verified** — do not cut another release until it is.
+**v0.8.0 is released and working.** An early report that the Sector Map rendered
+black turned out to be a stale process — it had not been restarted. No bug.
+Ignore any history suggesting otherwise.
 
-- **Symptom:** map page renders black; the rest of the app is fine. Dev
-  (`npm run tauri dev`) works, so it is packaged-build-only.
-- **Cause (strong hypothesis, unconfirmed):** the renderer initialised from
-  `mount.clientWidth / mount.clientHeight` with no guard. Zero-sized container →
-  `0 / 0` → **NaN** aspect → poisoned projection matrix → every frame renders
-  empty. Dev hid it because StrictMode builds the scene twice, so the second
-  settled build masked a broken first one.
-- **Fix applied** in `MapView.tsx`: fall back to `1` for either dimension, so the
-  ResizeObserver can correct to the real size instead of the camera dying.
-- **Devtools are now enabled in release builds** (`tauri` crate feature in
-  `Cargo.toml`). A packaged build previously could not be inspected at all,
-  which is what made this cost a round trip. **Ctrl+Shift+I** in production.
-  Keep it unless binary size becomes a concern.
+Two changes landed while chasing that phantom. Both were kept on their own
+merits, neither is a fix for anything:
 
-**Next step:** run `src-tauri/target/release/cerberus.exe` (already built, real
-prod frontend, no install needed) and open the Sector Map.
-- Works → cut **v0.8.1** with this fix, following RELEASING.md.
-- Still black → Ctrl+Shift+I on the map page and read the console; the real
-  error will be there now.
+- **Zero-size viewport guard** (`MapView.tsx`). The renderer took its viewport
+  straight from `mount.clientWidth/clientHeight`; if the scene is ever built
+  before layout settles, `0 / 0` is NaN, which poisons the camera's projection
+  matrix and renders empty frames forever. Never actually triggered, but it is a
+  real hazard and one line to remove. Kept as hardening.
+- **Devtools enabled in release builds** (`tauri` feature in `Cargo.toml`).
+  A packaged build previously could not be inspected at all. Since this ships to
+  a handful of clan mates rather than the public, the binary-size cost is
+  probably worth keeping for the next packaged-only bug. **Les's call** — drop
+  the feature if not wanted.
 
-**Process lesson:** v0.8.0 shipped without a smoke test and broke in the wild.
-Rust/UI changes are compile-verified only — always get Les to run the packaged
-binary before `gh release create`.
+Neither needs its own release; they can ride along with the next one.
 
-**Also uncommitted, different repo:** `delta` carries the colouring `OPEN QUESTION`
-notes (unverified per-click skill premise behind `CANS_PER_CLICK`). See
+**Process note that still stands:** v0.8.0 shipped without a smoke test. It
+happened to be fine, but Rust/UI work here is compile-verified only — get the
+packaged binary run before `gh release create`, not after.
+
+**Uncommitted, different repo:** `delta` carries the colouring `OPEN QUESTION`
+notes (the unverified per-click skill premise behind `CANS_PER_CLICK`). See
 `KNOWLEDGE.md` here for why that blocks porting the `models/` layer.
 
 ## Current state (2026-07-27)
 - **Released: v0.8.0** — forum reader, unified marker store, sector drill-down
-  map. **Map is broken in this build — see above.**
+  map. Verified working.
 - `KNOWLEDGE.md` holds the research toward a grounded "Entropia AI": which source
   answers what, measured gaps in the Nexus/forum/EC APIs, and worked examples.
   Nothing in it is built.
