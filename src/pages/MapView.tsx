@@ -693,7 +693,14 @@ export function MapView({
     // Direct rendering (no composer) keeps MSAA, so edges stay smooth; allow up
     // to 2× on high-DPI for crispness — cheap now that bloom is gone.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(mount.clientWidth, mount.clientHeight);
+    // Never initialise from a zero-sized container. `clientWidth/clientHeight`
+    // can both be 0 if the scene is built before layout has settled, and
+    // `0 / 0` is NaN — which poisons the camera's projection matrix and renders
+    // an empty frame forever after. Dev hid this: StrictMode builds the scene
+    // twice, so the second (settled) build masked a bad first one.
+    const w0 = mount.clientWidth || 1;
+    const h0 = mount.clientHeight || 1;
+    renderer.setSize(w0, h0);
     // Transparent clear — the app's own backdrop and grid show through instead of
     // a painted-on black, so the scene sits on the window rather than in a box.
     // The starfield below is real geometry, so it survives.
@@ -710,7 +717,7 @@ export function MapView({
     starGeo.setAttribute("position", new THREE.BufferAttribute(stars, 3));
     scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 0.05, color: 0x8fa0c0, transparent: true, opacity: 0.5 })));
 
-    const camera = new THREE.PerspectiveCamera(50, mount.clientWidth / mount.clientHeight, 0.01, 500);
+    const camera = new THREE.PerspectiveCamera(50, w0 / h0, 0.01, 500);
     camera.position.set(0, 6, 9);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;

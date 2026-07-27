@@ -15,7 +15,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# `devtools` is kept in release builds: this ships to a handful of clan mates,
+# and without it a packaged-only bug (the map failing where dev was fine) can't
+# be inspected at all. Ctrl+Shift+I opens the inspector.
+tauri = { version = "2", features = ["tray-icon", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"

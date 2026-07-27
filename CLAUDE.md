@@ -63,8 +63,46 @@ porting delta's `models/` layer (unverified coloring per-click premise).
 - No `console.log` in commits. Conventional commit prefixes. End commit messages with the Co-Authored-By trailer.
 - See `AUDIT.md` for the vanity-engineering audit (RCR 3/10) and the open items: MapView god-component (383-line effect), 4× duplicated JSON store boilerplate (`asteroids/poi/sessions/combat.rs` → a generic `JsonStore<T>` is justified), `lib.rs` as a god module (commands should move beside their domain modules).
 
-## Current state (2026-07-24)
-- **Released: v0.7.0.** In the wild, auto-updates from prior versions.
+## ⚠️ PICK UP HERE (2026-07-27)
+
+**v0.8.0 is released and the Sector Map is broken in that build.** Fix is written
+and compiled but **NOT verified** — do not cut another release until it is.
+
+- **Symptom:** map page renders black; the rest of the app is fine. Dev
+  (`npm run tauri dev`) works, so it is packaged-build-only.
+- **Cause (strong hypothesis, unconfirmed):** the renderer initialised from
+  `mount.clientWidth / mount.clientHeight` with no guard. Zero-sized container →
+  `0 / 0` → **NaN** aspect → poisoned projection matrix → every frame renders
+  empty. Dev hid it because StrictMode builds the scene twice, so the second
+  settled build masked a broken first one.
+- **Fix applied** in `MapView.tsx`: fall back to `1` for either dimension, so the
+  ResizeObserver can correct to the real size instead of the camera dying.
+- **Devtools are now enabled in release builds** (`tauri` crate feature in
+  `Cargo.toml`). A packaged build previously could not be inspected at all,
+  which is what made this cost a round trip. **Ctrl+Shift+I** in production.
+  Keep it unless binary size becomes a concern.
+
+**Next step:** run `src-tauri/target/release/cerberus.exe` (already built, real
+prod frontend, no install needed) and open the Sector Map.
+- Works → cut **v0.8.1** with this fix, following RELEASING.md.
+- Still black → Ctrl+Shift+I on the map page and read the console; the real
+  error will be there now.
+
+**Process lesson:** v0.8.0 shipped without a smoke test and broke in the wild.
+Rust/UI changes are compile-verified only — always get Les to run the packaged
+binary before `gh release create`.
+
+**Also uncommitted, different repo:** `delta` carries the colouring `OPEN QUESTION`
+notes (unverified per-click skill premise behind `CANS_PER_CLICK`). See
+`KNOWLEDGE.md` here for why that blocks porting the `models/` layer.
+
+## Current state (2026-07-27)
+- **Released: v0.8.0** — forum reader, unified marker store, sector drill-down
+  map. **Map is broken in this build — see above.**
+- `KNOWLEDGE.md` holds the research toward a grounded "Entropia AI": which source
+  answers what, measured gaps in the Nexus/forum/EC APIs, and worked examples.
+  Nothing in it is built.
+- **v0.7.0 notes below still apply.**
 - **EM accessibility tool is committed** (HEAD `a3f7718`). Still NOT smoke-tested/calibrated with Les — the unverified assumptions below stand.
   - **EM tool** = accessibility "engage mob" loop. Nav: Accessibility → EM Assist. Loop: press F (engage) → if no `You inflicted` damage lands, OCR the game minimap for red blips, turn the view (Z/C) toward the nearest, step W, repeat until combat registers. Minimap is heading-up (12 o'clock = forward); dot angle from vertical drives the turn. Rings = range. Everything tunable in the UI (persisted localStorage `cerberus.emTuning`/`cerberus.emRegion`, pushed to backend via `em_set_config` so topbar + HUD-dock toggles can arm it).
   - Safety: input gated on Entropia focus; global kill-switch **Ctrl+Shift+K**; hard time cap.
